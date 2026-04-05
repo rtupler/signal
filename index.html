@@ -64,13 +64,103 @@ const KEYS={
   PROMPT_VERSIONS:'sig_prompt_versions_v1',
 };
 // Helper: read/write with KEYS constant
+// ── STORAGE HEALTH MONITOR ────────────────────────────────
+// Tracks write failures, quota errors, and storage usage.
+// Prevents silent data loss from quota exhaustion.
+const _storageHealth={errors:0,lastError:null,quotaWarned:false};
+
 const KV={
   get:(k,def=null)=>{try{const v=localStorage.getItem(k);return v!=null?v:def;}catch{return def;}},
-  set:(k,v)=>{try{localStorage.setItem(k,v);}catch{}},
+  set:(k,v)=>{
+    try{localStorage.setItem(k,v);}
+    catch(e){
+      _storageHealth.errors++;
+      _storageHealth.lastError={key:k,ts:Date.now(),msg:e.message};
+      if(e.name==='QuotaExceededError'||e.name==='NS_ERROR_DOM_QUOTA_REACHED'){
+        _handleStorageQuota(k);
+      }
+      console.warn('[KV] Write failed:',k,e.message);
+    }
+  },
   remove:(k)=>{try{localStorage.removeItem(k);}catch{}},
-  getJSON:(k,def=null)=>{try{return JSON.parse(localStorage.getItem(k)||'null')??def;}catch{return def;}},
-  setJSON:(k,v)=>{try{localStorage.setItem(k,JSON.stringify(v));}catch{}},
+  getJSON:(k,def=null)=>{
+    try{
+      const raw=localStorage.getItem(k);
+      if(raw==null)return def;
+      const parsed=JSON.parse(raw);
+      return parsed??def;
+    }catch(e){
+      console.warn('[KV] Parse error:',k,e.message);
+      return def;
+    }
+  },
+  setJSON:(k,v)=>{
+    try{
+      const str=JSON.stringify(v);
+      localStorage.setItem(k,str);
+    }catch(e){
+      _storageHealth.errors++;
+      _storageHealth.lastError={key:k,ts:Date.now(),msg:e.message};
+      if(e.name==='QuotaExceededError'||e.name==='NS_ERROR_DOM_QUOTA_REACHED'){
+        _handleStorageQuota(k);
+      }
+      console.warn('[KV] setJSON failed:',k,e.message);
+    }
+  },
+  // Estimate total storage used in bytes
+  usedBytes:()=>{
+    try{
+      let total=0;
+      for(const key in localStorage){
+        if(localStorage.hasOwnProperty(key)){
+          total+=(localStorage.getItem(key)||'').length*2; // UTF-16
+        }
+      }
+      return total;
+    }catch{return 0;}
+  },
 };
+
+// Handle storage quota: prune oldest records from largest keys
+function _handleStorageQuota(failedKey){
+  if(_storageHealth.quotaWarned)return;
+  _storageHealth.quotaWarned=true;
+  console.warn('[Storage] Quota exceeded — pruning oldest records');
+  try{
+    // Prune auto-capture outcomes first (largest store)
+    const outcomes=KV.getJSON(KEYS.AUTO_CAPTURE_OUTCOMES,[]);
+    if(outcomes.length>50){
+      outcomes.splice(0,outcomes.length-50);
+      try{localStorage.setItem(KEYS.AUTO_CAPTURE_OUTCOMES,JSON.stringify(outcomes));}catch{}
+    }
+    // Prune event log
+    const log=KV.getJSON(KEYS.EVENT_LOG,[]);
+    if(log.length>50){
+      log.splice(0,log.length-50);
+      try{localStorage.setItem(KEYS.EVENT_LOG,JSON.stringify(log));}catch{}
+    }
+    // Prune structured predictions (keep only last 50)
+    const preds=KV.getJSON(KEYS.STRUCTURED_PREDS,[]);
+    if(preds.length>50){
+      // Keep all resolved (for calibration) + most recent unresolved
+      const resolved=preds.filter(p=>p.resolved);
+      const unresolved=preds.filter(p=>!p.resolved).slice(-20);
+      const pruned=[...resolved.slice(-30),...unresolved];
+      try{localStorage.setItem(KEYS.STRUCTURED_PREDS,JSON.stringify(pruned));}catch{}
+    }
+    // Prune NMS snapshots
+    const snaps=KV.getJSON('sig_nms_snapshots_v1',[]);
+    if(snaps.length>48){
+      snaps.splice(0,snaps.length-48);
+      try{localStorage.setItem('sig_nms_snapshots_v1',JSON.stringify(snaps));}catch{}
+    }
+    // Toast warning
+    setTimeout(()=>{
+      if(typeof toast==='function')
+        toast('⚠ Storage nearly full — oldest records pruned. Export data from Lab to preserve history.','warning',8000);
+    },1000);
+  }catch(e){console.error('[Storage] Pruning failed:',e.message);}
+}
 
 // ═══════════════════════════════════════════════════════════
 // EVENT LOG — lightweight append-only action log
@@ -110,6 +200,13 @@ function runAutoCapture(stories,nmsMapSnapshot){
   // Only fire on signal-relevant topics
   if(!_AUTO_CAPTURE_TOPICS.has(currentTopic))return;
   if(!stories||stories.length<3)return;
+  // Guard: never capture fallback stories — they have nms:0.5 and no real signal
+  // Fallback stories are created by _localStoryFallback() when Gemini is offline
+  const fallbackCount=stories.filter(s=>s._isFallback).length;
+  if(fallbackCount>stories.length*0.5){
+    console.log('[AutoCapture] Skipped — majority of stories are local fallbacks');
+    return;
+  }
 
   try{
     const ts=Date.now();
@@ -174,37 +271,49 @@ function runAutoCapture(stories,nmsMapSnapshot){
       vixProxy:reg==='Crash Override'?35:reg==='Risk-Off'?25:reg==='Neutral'?18:14,
     };
 
-    // ── SAVE ──────────────────────────────────────────────────
+    // ── SAVE (Bug 1+2 fix) ────────────────────────────────────
     const captures=KV.getJSON(KEYS.AUTO_CAPTURES,[]);
-    // Dedupe: don't save two captures for same topic within 2 hours
-    const recentSameTopic=captures.filter(c=>c.topic===currentTopic&&ts-new Date(c.ts).getTime()<2*3600000);
+    // Dedupe: use wall-clock now vs capture.ts for robustness
+    // Prevents race condition when topic switches mid-refresh
+    const now=Date.now();
+    const recentSameTopic=captures.filter(c=>{
+      if(c.topic!==currentTopic)return false;
+      const age=now-new Date(c.ts).getTime();
+      return age<2*3600000;
+    });
     if(recentSameTopic.length>0){
-      console.log('[AutoCapture] Skipped — same topic captured within 2h');
+      const minsAgo=Math.round((now-new Date(recentSameTopic[recentSameTopic.length-1].ts).getTime())/60000);
+      console.log(`[AutoCapture] Skipped — ${currentTopic} captured ${minsAgo}min ago`);
       return;
     }
     captures.push(capture);
     if(captures.length>_MAX_AUTO_CAPTURES)captures.splice(0,captures.length-_MAX_AUTO_CAPTURES);
     KV.setJSON(KEYS.AUTO_CAPTURES,captures);
 
-    // ── INIT PRICE OUTCOME RECORDS ────────────────────────────
-    // Create outcome records for each ticker so price fills in later
+    // ── INIT PRICE OUTCOME RECORDS (Bug 1+9 fix) ─────────────
+    // nmsAtCapture MUST be written NOW from nmsMapSnapshot — not backfilled.
+    // nmsMapSnapshot is the live NMS at capture time. Reading nmsMap later
+    // risks stale values if a new Refresh runs before outcomes are read.
+    // Duplicate guard: check autoCaptureId:ticker before pushing.
     const outcomes=KV.getJSON(KEYS.AUTO_CAPTURE_OUTCOMES,[]);
-    const liveQQQ=_cachedPrices?.QQQ||_cachedPrices?.qqq||null;
+    const liveQQQ=typeof _cachedPrices!=='undefined'?(_cachedPrices?.QQQ||_cachedPrices?.qqq||null):null;
+    const existingOutcomeIds=new Set(outcomes.map(o=>o.autoCaptureId+':'+o.ticker));
     m20Tickers.forEach(t=>{
       const td=tickerData[t];
-      if(td&&td.nms!=null){
+      const key=ts+':'+t;
+      if(td&&td.nms!=null&&!existingOutcomeIds.has(key)){
         outcomes.push({
           autoCaptureId:ts,
           ticker:t,
           ts:new Date().toISOString(),
           topic:currentTopic,
           regime:reg,
-          nmsAtCapture:td.nms,
+          nmsAtCapture:td.nms,           // Set from nmsMapSnapshot NOW
           velDeltaAtCapture:td.velDelta,
           exhaustionAtCapture:td.exhaustion,
           tradeFiredAtCapture:tradeFired.some(x=>x.ticker===t),
           signalScoreAtCapture:signalScore,
-          priceAtCapture:_cachedPrices?.[t]||null,
+          priceAtCapture:typeof _cachedPrices!=='undefined'?(_cachedPrices?.[t]||null):null,
           qqqPriceAtCapture:liveQQQ,
           p3d:null,p7d:null,p14d:null,
           r3d:null,r7d:null,r14d:null,
@@ -299,8 +408,30 @@ function fillAutoCapturePriceOutcomes(){
 }
 
 // IC computation for auto-captures — separate from manual sessions
+// ── OUTCOME DEDUPLICATION (Fix 9) ────────────────────────
+// Deduplicates outcomes before IC computation to prevent
+// duplicate records from inflating n and skewing correlation.
+// Keeps the most complete record (prefer ones with price fills).
+function _dedupeOutcomes(outcomes){
+  const seen=new Map();
+  outcomes.forEach(o=>{
+    const key=o.autoCaptureId+':'+o.ticker;
+    const existing=seen.get(key);
+    if(!existing){
+      seen.set(key,o);
+    } else {
+      // Keep the record with more non-null price fields
+      const existingFills=[existing.r3d,existing.r7d,existing.r14d].filter(v=>v!=null).length;
+      const newFills=[o.r3d,o.r7d,o.r14d].filter(v=>v!=null).length;
+      if(newFills>existingFills)seen.set(key,o);
+    }
+  });
+  return Array.from(seen.values());
+}
+
 function computeAutoIC(horizon='r14d'){
-  const outcomes=KV.getJSON(KEYS.AUTO_CAPTURE_OUTCOMES,[]);
+  const raw=KV.getJSON(KEYS.AUTO_CAPTURE_OUTCOMES,[]);
+  const outcomes=_dedupeOutcomes(raw);
   const valid=outcomes.filter(o=>o.nmsAtCapture!=null&&o[horizon]!=null);
   if(valid.length<5)return null;
   const xs=valid.map(o=>o.nmsAtCapture);
@@ -310,7 +441,8 @@ function computeAutoIC(horizon='r14d'){
 
 // Regime-segmented IC — shows whether NMS predicts better in specific regimes
 function computeAutoICByRegime(horizon='r14d'){
-  const outcomes=KV.getJSON(KEYS.AUTO_CAPTURE_OUTCOMES,[]);
+  const raw=KV.getJSON(KEYS.AUTO_CAPTURE_OUTCOMES,[]);
+  const outcomes=_dedupeOutcomes(raw);
   const regimes=['Risk-On','Neutral','Risk-Off'];
   const result={};
   regimes.forEach(r=>{
@@ -1512,9 +1644,11 @@ button:focus-visible,a:focus-visible{outline:2px solid var(--acc);outline-offset
           <div class="t-t3" style="font-size:9px;">Click Refresh to load diagnostics</div>
         </div>
         <div style="display:flex;gap:6px;margin-top:.5rem;">
-          <button class="set-save" style="background:var(--s3);color:var(--t2);border:1px solid var(--b2);font-size:10px;padding:.35rem .75rem;" onclick="renderDiagnostics()">↻ Refresh Diagnostics</button>
-          <button class="set-save" style="background:var(--s3);color:var(--t2);border:1px solid var(--b2);font-size:10px;padding:.35rem .75rem;" onclick="clearEventLog()">Clear Event Log</button>
+          <button class="set-save" style="background:var(--s3);color:var(--t2);border:1px solid var(--b2);font-size:10px;padding:.35rem .75rem;" onclick="renderDiagnostics()">↻ Refresh</button>
+          <button class="set-save" style="background:var(--s3);color:var(--t2);border:1px solid var(--b2);font-size:10px;padding:.35rem .75rem;" onclick="clearEventLog()">Clear Log</button>
           <button class="set-save" style="background:var(--s3);color:var(--t2);border:1px solid var(--b2);font-size:10px;padding:.35rem .75rem;" onclick="exportEventLog()">Export Log</button>
+          <button class="set-save" style="background:rgba(0,200,255,.1);color:var(--acc);border:1px solid rgba(0,200,255,.2);font-size:10px;padding:.35rem .75rem;" onclick="exportSignalBackup()">↓ Backup All</button>
+          <button class="set-save" style="background:var(--s3);color:var(--t2);border:1px solid var(--b2);font-size:10px;padding:.35rem .75rem;" onclick="importSignalBackup()">↑ Restore</button>
         </div>
       </div>
     </div>
@@ -1523,7 +1657,7 @@ button:focus-visible,a:focus-visible{outline:2px solid var(--acc);outline-offset
 
 <!-- HEADER -->
 <header class="hdr">
-  <div class="flex-row gap-2"><div class="logo">SIGNAL<span class="logo-v" title="Predictive Intelligence Platform · v35">v35</span></div><div id="vixIndicator" style="display:none;"></div><div id="stalenessBar" style="display:none;align-items:center;margin-left:.5rem;"></div></div>
+  <div class="flex-row gap-2"><div class="logo">SIGNAL<span class="logo-v" title="Predictive Intelligence Platform · v35">v35</span></div><div id="vixIndicator" style="display:none;"></div><div id="circuitIndicator" style="display:none;"></div><div id="stalenessBar" style="display:none;align-items:center;margin-left:.5rem;"></div></div>
   <div class="hdot" style="margin-left:.25rem;"></div>
   <div class="tbar">
     <button class="tp on" data-topic="Top Stories">Top Stories</button>
@@ -2857,6 +2991,13 @@ const _M20_BRIEF_CACHE='sig_m20brief_v1';
 async function generateSessionPreBrief(){
   if(!API_KEY||API_KEY.length<20){toast('Enter Gemini API key first','warning',2500);return;}
   const el=document.getElementById('sessionPreBriefOutput');
+
+  // Circuit breaker: show local fallback if Gemini is down
+  if(_geminiCircuit.isOpen()){
+    if(el)el.innerHTML=`<div style="font-size:10px;color:var(--t2);padding:.5rem;line-height:1.7;white-space:pre-wrap;">${esc(_localBriefFallback())}</div><div style="font-size:8px;color:var(--amber);margin-top:.4rem;padding:0 .5rem;">⚡ Gemini offline · local brief · resets in ${_geminiCircuit.minutesRemaining()}min</div>`;
+    return;
+  }
+
   if(el)el.innerHTML='<div style="font-size:10px;color:var(--t3);padding:.5rem;">Generating session brief…</div>';
 
   // Gather all data
@@ -2969,6 +3110,19 @@ async function generateM20Brief(force=false){
   }
 
   if(statusEl)statusEl.textContent='Building session brief…';
+
+  // Circuit breaker: if Gemini is down, show honest degraded state
+  if(_geminiCircuit.isOpen()){
+    const fallbackText=_localBriefFallback();
+    const el1=document.getElementById('m20BriefInline');
+    const el2=document.getElementById('m20BriefInlineMobile');
+    const fallbackHtml=`<div style="padding:1rem;font-size:10px;color:var(--t2);line-height:1.8;white-space:pre-wrap;font-family:var(--mono);">${esc(fallbackText)}</div>`;
+    if(el1)el1.innerHTML=fallbackHtml;
+    if(el2)el2.innerHTML=fallbackHtml;
+    if(statusEl)statusEl.textContent=`Gemini offline — degraded mode · resets in ${_geminiCircuit.minutesRemaining()}min`;
+    setTabDot('m20brief','loaded');
+    return;
+  }
 
   // Render tracker form
   renderM20TrackerForm();
@@ -3277,6 +3431,40 @@ function _synthKey(t){return 'sig_synth_'+(t||currentTopic).replace(/[^a-z0-9]/g
 // Flags coordinated narrative vs organic news development
 // Organic: builds gradually over hours/days
 // Synthetic coordination: many sources within tight window simultaneously
+
+// ── NMS FIELD NORMALIZER (Fix 4 + Grok rec) ──────────────
+// Resolves the nms vs _nms inconsistency across story paths.
+// Stories from Gemini enrichment have _nms (computed).
+// Stories from fallback/sweep paths have nms (raw).
+// Always use storyNms(s) instead of s.nms or s._nms directly.
+function storyNms(s){
+  if(!s)return 0.5;
+  // _nms is the authoritative computed value (set by computeNMS)
+  if(s._nms!=null)return s._nms;
+  // nms is the raw value from Gemini enrichment or fallback
+  if(s.nms!=null)return s.nms;
+  // momentumScore is Gemini's 0-1 estimate (used in early enrichment)
+  if(s.momentumScore!=null)return s.momentumScore;
+  return 0.5;
+}
+
+// Normalize nms fields on a story array — call after enrichment
+function normalizeNmsFields(stories){
+  if(!Array.isArray(stories))return stories||[];
+  return stories.map(s=>{
+    if(s._nms==null&&s.nms!=null)s._nms=s.nms;
+    if(s.nms==null&&s._nms!=null)s.nms=s._nms;
+    return s;
+  });
+}
+
+// ── GLOBAL STATE NULL GUARDS (Fix 4) ─────────────────────
+// Safe accessors for shared globals that may be uninitialized
+function _safeStories(){return Array.isArray(stories)&&stories.length?stories:[];}
+function _safeNmsMap(){return nmsMap&&typeof nmsMap==='object'?nmsMap:{};}
+function _safeCachedPM(){return Array.isArray(_cachedPM)?_cachedPM:[];}
+function _safeM20Tickers(){return Array.isArray(m20Tickers)&&m20Tickers.length?m20Tickers:[];}
+function _safeIvData(){return _ivData&&typeof _ivData==='object'?_ivData:{};}
 
 const WIRE_SERVICES=new Set(['reuters','ap','associated press','bloomberg','afp','pa media','dpa','xinhua']);
 
@@ -4289,6 +4477,25 @@ function renderDiagnostics(){
         ${dnHtml?`<div><span style="font-size:8px;color:var(--t3);">↓ Low-IC terms: </span>${dnHtml}</div>`:''}
         <div style="font-size:7px;color:var(--t3);margin-top:.2rem;">Terms appearing more in high-IC sessions warrant upweighting in FIN_SENT</div>`;
     })()}
+    ${(()=>{
+      // SIGNAL Has Learned summary
+      const learned=getSignalLearnedSummary();
+      if(!learned||!learned.insights.length)return'';
+      return`<div style="border-top:1px solid var(--b1);margin:.5rem 0;"></div>
+        <div style="font-size:9px;font-weight:700;color:var(--acc);letter-spacing:.06em;text-transform:uppercase;margin-bottom:.3rem;">✦ SIGNAL Has Learned · ${learned.captures} sessions</div>
+        ${learned.insights.map(i=>`<div style="font-size:8px;color:var(--t2);margin-bottom:.2rem;">→ ${i}</div>`).join('')}
+        <div style="font-size:7px;color:var(--t3);margin-top:.2rem;">
+          Adaptive weights: ${learned.adaptiveActive?'active':'pending 30 captures'} · 
+          PM alpha boost: ${learned.pmAlphaActive?'active':'pending'} · 
+          Resolved predictions: ${learned.resolvedPreds}
+        </div>`;
+    })()}
+    ${(()=>{
+      // Storage health
+      if(!_storageHealth.errors)return'';
+      return`<div style="border-top:1px solid var(--b1);margin:.5rem 0;"></div>
+        <div style="font-size:8px;color:var(--red);">⚠ Storage errors: ${_storageHealth.errors} · Last: ${_storageHealth.lastError?.key||'unknown'}</div>`;
+    })()}
   `;
 }
 
@@ -4302,6 +4509,117 @@ function exportEventLog(){
   a.click();
   toast('Event log exported','success',2000);
   logEvent('export_event_log',{count:log.length});
+}
+
+// ── FULL STATE EXPORT / IMPORT (Grok rec) ────────────────
+// One-click backup of all SIGNAL localStorage data.
+// Invaluable when switching machines or after breaking changes.
+function exportSignalBackup(){
+  try{
+    const backup={
+      version:'signal_v35',
+      ts:new Date().toISOString(),
+      data:{}
+    };
+    // Export all SIGNAL keys
+    const sigKeys=Object.keys(localStorage).filter(k=>
+      k.startsWith('sig_')||k.startsWith('lab_')||k.startsWith('c_')||
+      k.includes('signal')||k.includes('m20')||k.includes('pred')
+    );
+    sigKeys.forEach(k=>{
+      try{backup.data[k]=JSON.parse(localStorage.getItem(k));}
+      catch{backup.data[k]=localStorage.getItem(k);}
+    });
+    const json=JSON.stringify(backup,null,2);
+    const a=document.createElement('a');
+    a.href='data:application/json;charset=utf-8,'+encodeURIComponent(json);
+    a.download=`signal-backup-${new Date().toISOString().slice(0,10)}.json`;
+    a.click();
+    toast(`SIGNAL backup exported · ${sigKeys.length} keys · ${Math.round(json.length/1024)}KB`,'success',4000);
+    logEvent('export_backup',{keys:sigKeys.length,sizeKb:Math.round(json.length/1024)});
+  }catch(e){toast('Export failed: '+e.message,'warning',3000);}
+}
+
+function importSignalBackup(){
+  const input=document.createElement('input');
+  input.type='file';
+  input.accept='.json';
+  input.onchange=async(ev)=>{
+    const file=ev.target.files[0];
+    if(!file)return;
+    try{
+      const text=await file.text();
+      const backup=JSON.parse(text);
+      if(!backup.version||!backup.data)throw new Error('Invalid backup format');
+      let restored=0;
+      Object.entries(backup.data).forEach(([k,v])=>{
+        try{
+          localStorage.setItem(k,typeof v==='string'?v:JSON.stringify(v));
+          restored++;
+        }catch{}
+      });
+      toast(`SIGNAL backup restored · ${restored} keys · Reload to apply`,'success',6000);
+      logEvent('import_backup',{keys:restored,fromDate:backup.ts});
+    }catch(e){toast('Import failed: '+e.message,'warning',4000);}
+  };
+  input.click();
+}
+
+// ── "SIGNAL HAS LEARNED" SUMMARY (Grok rec) ──────────────
+// After 30+ captures, surfaces what the model has empirically learned
+// in plain language — which signals are working, which aren't.
+function getSignalLearnedSummary(){
+  const captures=KV.getJSON(KEYS.AUTO_CAPTURES,[]);
+  const outcomes=_dedupeOutcomes(KV.getJSON(KEYS.AUTO_CAPTURE_OUTCOMES,[]));
+  const preds=KV.getJSON(KEYS.STRUCTURED_PREDS,[]);
+  const adaptiveW=getAdaptiveWeights();
+  const ic14=computeAutoIC('r14d');
+  const ic7=computeAutoIC('r7d');
+  const resolvedPreds=preds.filter(p=>p.resolved&&p.signal_was_right!=null);
+
+  if(captures.length<5)return null;
+
+  const insights=[];
+
+  // What the model has learned about NMS weights
+  if(adaptiveW&&adaptiveW._empirical){
+    const strongest=Object.entries({Trend:adaptiveW.trend,PM:adaptiveW.pm,Sentiment:adaptiveW.sent,Cluster:adaptiveW.co})
+      .sort((a,b)=>b[1]-a[1])[0];
+    insights.push(`${strongest[0]} delta is your strongest NMS predictor (weight: ${Math.round(strongest[1]*100)}%)`);
+  }
+
+  // IC insight
+  if(ic14!=null){
+    const horizon=ic7!=null&&Math.abs(ic7)>Math.abs(ic14)?'7-day':'14-day';
+    insights.push(`NMS has ${ic14>=0.05?'meaningful':'weak'} predictive power at ${horizon} horizon (IC: ${ic14>=0?'+':''}${ic14})`);
+  }
+
+  // Prediction accuracy
+  if(resolvedPreds.length>=5){
+    const acc=Math.round(resolvedPreds.filter(p=>p.signal_was_right).length/resolvedPreds.length*100);
+    const divergent=resolvedPreds.filter(p=>p.divergence_signal);
+    const divAcc=divergent.length?Math.round(divergent.filter(p=>p.signal_was_right).length/divergent.length*100):null;
+    insights.push(`Prediction accuracy: ${acc}% overall${divAcc!=null?`, ${divAcc}% when diverging from Polymarket`:''}`);
+  }
+
+  // Best event type
+  const byType={};
+  resolvedPreds.forEach(p=>{
+    if(!byType[p.event_type])byType[p.event_type]={hits:0,n:0};
+    byType[p.event_type].n++;
+    if(p.signal_was_right)byType[p.event_type].hits++;
+  });
+  const bestType=Object.entries(byType).filter(([,d])=>d.n>=2)
+    .sort((a,b)=>b[1].hits/b[1].n-a[1].hits/a[1].n)[0];
+  if(bestType)insights.push(`Strongest event type: ${bestType[0].replace('_',' ')} (${Math.round(bestType[1].hits/bestType[1].n*100)}% accuracy)`);
+
+  return{
+    captures:captures.length,
+    resolvedPreds:resolvedPreds.length,
+    insights,
+    adaptiveActive:!!(adaptiveW&&adaptiveW._empirical),
+    pmAlphaActive:!!(adaptiveW&&adaptiveW._pmAlphaBoost),
+  };
 }
 
 function closeSett(){document.getElementById('settModal').classList.remove('open');}
@@ -4508,32 +4826,200 @@ async function _doFetch(model,prompt,sys,search,maxTok=2500,jsonMode=true){
   }
   throw new Error('Gemini 429: rate limited after retries — enable billing for higher quota');
 }
+// ── GEMINI CIRCUIT BREAKER ────────────────────────────────
+// Tracks consecutive failures. After 3 failures, opens the
+// circuit for 5 minutes — skips Gemini calls entirely and
+// returns local fallbacks. Prevents cascade failures on
+// rate-limit days or quota exhaustion.
+const _geminiCircuit={
+  failures:0,
+  openedAt:null,
+  THRESHOLD:3,
+  COOLDOWN_MS:5*60*1000, // 5 minutes
+  isOpen(){
+    if(this.openedAt===null)return false;
+    if(Date.now()-this.openedAt>this.COOLDOWN_MS){
+      // Auto-reset after cooldown
+      this.failures=0;this.openedAt=null;
+      console.log('[Circuit] Gemini circuit reset after cooldown');
+      return false;
+    }
+    return true;
+  },
+  recordFailure(){
+    this.failures++;
+    if(this.failures>=this.THRESHOLD&&this.openedAt===null){
+      this.openedAt=Date.now();
+      const minsLeft=Math.round(this.COOLDOWN_MS/60000);
+      console.warn(`[Circuit] Gemini circuit OPEN — ${this.failures} failures. Cooling down ${minsLeft}min.`);
+      if(typeof toast==='function')
+        toast(`Gemini unavailable — using local fallbacks for ${minsLeft} min`,'warning',7000);
+    }
+  },
+  recordSuccess(){
+    if(this.failures>0){
+      console.log('[Circuit] Gemini success — resetting failure count');
+      this.failures=0;this.openedAt=null;
+    }
+  },
+  minutesRemaining(){
+    if(!this.openedAt)return 0;
+    return Math.max(0,Math.round((this.COOLDOWN_MS-(Date.now()-this.openedAt))/60000));
+  }
+};
+
+// ── LOCAL FALLBACKS ───────────────────────────────────────
+// Graceful degradation when Gemini is unavailable.
+// Returns plausible-structure responses that keep the UI alive.
+function _localBriefFallback(){
+  const reg=typeof getEffectiveRegime==='function'?getEffectiveRegime():(typeof regime!=='undefined'?regime:'Neutral');
+  const ic=typeof computeAutoIC==='function'?computeAutoIC('r14d'):null;
+  const caps=typeof KV!=='undefined'?KV.getJSON(KEYS.AUTO_CAPTURES||'sig_auto_captures_v1',[]).length:0;
+  const minsLeft=_geminiCircuit.minutesRemaining();
+  // Show what's still working, not fake AI content
+  return[
+    `⚡ Gemini Offline — Degraded Mode (resets in ${minsLeft} min)`,
+    ``,
+    `What's still working:`,
+    `  → NMS scoring from Google News RSS`,
+    `  → Polymarket + Kalshi market data`,
+    `  → VIX + Yield Curve indicators`,
+    `  → Exit clock tracking`,
+    `  → NMS sparklines (${caps} captures stored)`,
+    `  → Signal Score history`,
+    ``,
+    `Current regime: ${reg}${ic!=null?` · IC: ${ic}`:''}`,
+    ``,
+    `What's unavailable:`,
+    `  → AI narrative synthesis`,
+    `  → Story enrichment (NMS from raw headlines only)`,
+    `  → Structured predictions`,
+    `  → Session pre-brief`,
+    ``,
+    `Reload SIGNAL when Gemini is back online.`,
+    `Settings → Diagnostics shows ${_geminiCircuit.failures} recent failure(s).`,
+  ].join('\n');
+}
+
+function _localStoryFallback(){
+  // Returns empty array — do NOT inject fake stories into the feed
+  // Fake stories with nms:0.5 pollute IC calculations and mislead the user
+  // Callers should handle empty array gracefully
+  return[];
+}
+
+function _localSynthesisFallback(){
+  const reg=typeof getEffectiveRegime==='function'?getEffectiveRegime():'Neutral';
+  const ic=typeof computeAutoIC==='function'?computeAutoIC('r14d'):null;
+  return{
+    synthesis:`Narrative synthesis unavailable — Gemini offline.\n\nRegime: ${reg}${ic!=null?` · IC: ${ic}`:''}\n\nRefresh stories when connection is restored for AI-powered analysis.`,
+    topNarratives:[],
+    risks:[],
+    isFallback:true,
+  };
+}
+
 async function _rawGemini(prompt,sys,maxTok=2500,jsonMode=true){
+  // ── CIRCUIT BREAKER CHECK ─────────────────────────────────
+  if(_geminiCircuit.isOpen()){
+    console.log(`[Circuit] Gemini circuit open — ${_geminiCircuit.minutesRemaining()}min remaining`);
+    // Return appropriate local fallback based on prompt type
+    if(/m20.brief|session.brief|morning.brief|synthesis/i.test(prompt))return _localBriefFallback();
+    if(/stories|headlines|enrichi/i.test(prompt))return JSON.stringify(_localStoryFallback());
+    throw new Error(`Gemini circuit open — cooling down ${_geminiCircuit.minutesRemaining()}min`);
+  }
+
   // Only use search mode for explicit search requests, not structured analysis
   // 'news' and 'today' appear in all prompts — don't trigger expensive search path
   const needsSearch=/\bsearch for\b|\bfind recent\b|\bwhat happened/i.test(prompt);
   if(needsSearch){
     for(const m of MODELS){
-      try{const t=await _doFetch(m,prompt,sys,true,maxTok,jsonMode);if(t&&t.length>10)return t;}
+      try{
+        const t=await _doFetch(m,prompt,sys,true,maxTok,jsonMode);
+        if(t&&t.length>10){_geminiCircuit.recordSuccess();return t;}
+      }
       catch(e){console.warn(m+'+search:',e.message);}
       await new Promise(r=>setTimeout(r,200));
     }
   }
   for(const m of MODELS){
-    try{const t=await _doFetch(m,prompt,sys,false,maxTok,jsonMode);if(t&&t.length>5)return t;}
-    catch(e){console.warn(m+':',e.message);}
+    try{
+      const t=await _doFetch(m,prompt,sys,false,maxTok,jsonMode);
+      if(t&&t.length>5){_geminiCircuit.recordSuccess();return t;}
+    }
+    catch(e){
+      console.warn(m+':',e.message);
+      // Record failure for circuit breaker on rate-limit or server errors
+      if(e.message.includes('429')||e.message.includes('500')||e.message.includes('503')){
+        _geminiCircuit.recordFailure();
+      }
+    }
     await new Promise(r=>setTimeout(r,200));
   }
+  // All models exhausted — record failure and throw
+  _geminiCircuit.recordFailure();
   throw new Error('All models exhausted');
 }
 async function gemini(prompt,sys=SYS,label='gemini',maxTok=2500,jsonMode=true){return queued(()=>_rawGemini(prompt,sys,maxTok,jsonMode),label);}
 
+// ── ROBUST JSON PARSER (Fix 5 + Grok rec) ────────────────
+// Handles all Gemini response patterns: markdown fences,
+// trailing commas, single quotes, extra text before/after JSON.
+// Retries with sanitization before throwing.
 function parseJSON(t){
-  const c=t.replace(/```json|```/g,'').trim();
-  function outer(s,o,cl){const st=s.indexOf(o);if(st===-1)return null;let d=0;for(let i=st;i<s.length;i++){if(s[i]===o)d++;else if(s[i]===cl){d--;if(d===0)return s.slice(st,i+1);}}return null;}
-  const arr=outer(c,'[',']');if(arr)try{return JSON.parse(arr);}catch{}
-  const obj=outer(c,'{','}');if(obj)try{return JSON.parse(obj);}catch{}
-  throw new Error('JSON parse failed: '+c.slice(0,60));
+  if(!t||typeof t!=='string')throw new Error('parseJSON: empty input');
+  // Step 1: Strip markdown fences and leading/trailing whitespace
+  let c=t.replace(/```json\s*/gi,'').replace(/```\s*/g,'').trim();
+  // Step 2: Strip any leading/trailing non-JSON text
+  // Find first [ or { and last ] or }
+  function extractOuter(s,open,close){
+    const st=s.indexOf(open);
+    if(st===-1)return null;
+    let depth=0;
+    for(let i=st;i<s.length;i++){
+      if(s[i]===open)depth++;
+      else if(s[i]===close){depth--;if(depth===0)return s.slice(st,i+1);}
+    }
+    return null;
+  }
+  // Try array first, then object
+  for(const [o,cl] of[['[',']'],['{','}']]) {
+    const chunk=extractOuter(c,o,cl);
+    if(chunk){
+      // Step 3: Try direct parse
+      try{return JSON.parse(chunk);}catch{}
+      // Step 4: Sanitize — remove trailing commas before ] or }
+      const sanitized=chunk
+        .replace(/,\s*([}\]])/g,'$1')  // trailing commas
+        .replace(/([{,]\s*)(\w+)\s*:/g,'$1"$2":') // unquoted keys
+        .replace(/:\s*'([^']*)'/g,':"$1"'); // single-quoted strings
+      try{return JSON.parse(sanitized);}catch{}
+    }
+  }
+  throw new Error('JSON parse failed after sanitization: '+c.slice(0,80));
+}
+
+// Gemini response validator — ensures enrichment output has required fields
+function _validateEnrichedStory(s){
+  if(!s||typeof s!=='object')return false;
+  if(!s.headline||typeof s.headline!=='string')return false;
+  return true;
+}
+
+// Safe Gemini JSON call with retry — wraps geminiSynth for JSON-returning prompts
+async function geminiJSON(prompt, sys, maxTok, retries=2){
+  let lastErr;
+  for(let attempt=0;attempt<=retries;attempt++){
+    try{
+      const raw=await geminiSynth(prompt,sys,maxTok,true);
+      return parseJSON(raw);
+    }catch(e){
+      lastErr=e;
+      console.warn(`[geminiJSON] Attempt ${attempt+1} failed:`,e.message);
+      if(attempt<retries)await new Promise(r=>setTimeout(r,500*(attempt+1)));
+    }
+  }
+  throw lastErr;
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -5818,9 +6304,24 @@ function renderVIXIndicator(){
   el.innerHTML=`<span style="font-size:8px;font-weight:700;letter-spacing:.07em;text-transform:uppercase;color:${color};display:flex;align-items:center;gap:4px;">
     ${override?'⚠':'◎'} VIX ${_vixValue} ${override?'· Risk-Off Override':'· Risk-On'}
   </span>`;
-  // If VIX override, show a warning if user has manually set Risk-On
   if(override&&regime==='Risk-On'){
     el.title='VIX above 25 — market fear elevated. NMS weights auto-shifted toward PM.';
+  }
+  // Update circuit breaker indicator whenever VIX renders
+  _renderCircuitIndicator();
+}
+
+function _renderCircuitIndicator(){
+  const el=document.getElementById('circuitIndicator');
+  if(!el)return;
+  if(_geminiCircuit.isOpen()){
+    el.style.display='flex';
+    el.innerHTML=`<span style="font-size:8px;font-weight:700;color:var(--amber);letter-spacing:.05em;display:flex;align-items:center;gap:3px;" title="Gemini circuit open — using local fallbacks. Resets in ${_geminiCircuit.minutesRemaining()} min.">⚡ AI Offline · ${_geminiCircuit.minutesRemaining()}m</span>`;
+  } else if(_geminiCircuit.failures>0){
+    el.style.display='flex';
+    el.innerHTML=`<span style="font-size:8px;color:var(--amber);letter-spacing:.05em;" title="${_geminiCircuit.failures} recent Gemini failure(s)">⚠ ${_geminiCircuit.failures} fail${_geminiCircuit.failures>1?'s':''}</span>`;
+  } else {
+    el.style.display='none';
   }
 }
 
@@ -9345,17 +9846,26 @@ const GHOST_KEYWORDS={
 
 function detectGhostTickerSpikes(stories){
   if(!stories||!stories.length)return[];
+  const now=Date.now();
   const spikes=[];
   Object.entries(GHOST_KEYWORDS).forEach(([ghost,keywords])=>{
+    // Fix 8: Filter to recent stories only (< 12h) to avoid stale ghost signals
     const ghostStories=stories.filter(s=>{
       const text=((s.headline||'')+' '+(s.summary||'')).toLowerCase();
-      return keywords.some(k=>text.includes(k));
+      // Require at least 2 keyword matches OR 1 strong keyword (4+ chars) match
+      // Prevents broad thematic false positives from single generic word matches
+      const matches=keywords.filter(k=>k.length>=4&&text.includes(k));
+      if(!matches.length)return false;
+      // Recency check: prefer stories < 12h old
+      const age=storyAgeMs(s.timeAgo||'');
+      return age<12*3600000;
     });
-    if(!ghostStories.length)return;
-    const avgNms=ghostStories.reduce((a,s)=>a+(s._nms||0.5),0)/ghostStories.length;
-    if(avgNms>=0.62){ // only spike if NMS is meaningful
+    // Fix 8: Require minimum 2 stories to confirm ghost spike (not just 1 mention)
+    if(ghostStories.length<2)return;
+    const avgNms=ghostStories.reduce((a,s)=>a+storyNms(s),0)/ghostStories.length;
+    if(avgNms>=0.62){
       const affected=GHOST_TICKER_MAP[ghost]||[];
-      const affectedInM20=affected.filter(t=>m20Tickers.includes(t));
+      const affectedInM20=affected.filter(t=>(_safeM20Tickers()).includes(t));
       if(affectedInM20.length){
         spikes.push({
           ghost,
@@ -11223,6 +11733,9 @@ async function loadAll(force=false){
     try{
       enrichedStories=enrichWithCredibility(enrichedStories);
     }catch(e){console.warn('[SIGNAL] enrichWithCredibility failed:',e.message);}
+    try{
+      enrichedStories=normalizeNmsFields(enrichedStories);
+    }catch(e){console.warn('[SIGNAL] normalizeNmsFields failed:',e.message);}
     try{
       enrichedStories=enrichWithNarrativeEntropy(enrichedStories);
     }catch(e){console.warn('[SIGNAL] enrichWithNarrativeEntropy failed:',e.message);}
