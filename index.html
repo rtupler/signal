@@ -58,6 +58,10 @@ const KEYS={
   ANALYST:'sig_analyst_v1',
   // Event log
   EVENT_LOG:'sig_event_log_v1',
+  AUTO_CAPTURES:'sig_auto_captures_v1',
+  AUTO_CAPTURE_OUTCOMES:'sig_auto_outcomes_v1',
+  STRUCTURED_PREDS:'sig_structured_preds_v1',
+  PROMPT_VERSIONS:'sig_prompt_versions_v1',
 };
 // Helper: read/write with KEYS constant
 const KV={
@@ -91,6 +95,336 @@ function logEvent(action,detail={}){
 }
 function getEventLog(){return KV.getJSON(KEYS.EVENT_LOG,[]);}
 function clearEventLog(){KV.remove(KEYS.EVENT_LOG);toast('Event log cleared','info',1500);}
+
+// ═══════════════════════════════════════════════════════════
+// AUTO-CAPTURE ENGINE
+// Fires silently after every Refresh on trigger topics.
+// Builds continuous narrative signal log for IC calibration
+// without requiring manual M20 session entry.
+// Topics: Finance, Markets, Top Stories, Technology
+// ═══════════════════════════════════════════════════════════
+const _AUTO_CAPTURE_TOPICS=new Set(['Finance','Markets','Top Stories','Technology']);
+const _MAX_AUTO_CAPTURES=500;
+
+function runAutoCapture(stories,nmsMapSnapshot){
+  // Only fire on signal-relevant topics
+  if(!_AUTO_CAPTURE_TOPICS.has(currentTopic))return;
+  if(!stories||stories.length<3)return;
+
+  try{
+    const ts=Date.now();
+    const reg=typeof getEffectiveRegime==='function'?getEffectiveRegime():regime;
+
+    // ── PER-TICKER NMS SNAPSHOT ──────────────────────────────
+    const tickerData={};
+    m20Tickers.forEach(t=>{
+      const nms=nmsMapSnapshot[t]!=null?nmsMapSnapshot[t]:null;
+      const velDelta=nmsMapSnapshot[t+'_velDelta']!=null?nmsMapSnapshot[t+'_velDelta']:null;
+      const exhaustion=nmsMapSnapshot[t+'_exhaustion']||false;
+      const src=nmsMapSnapshot[t+'_src']||'direct';
+      tickerData[t]={nms,velDelta,exhaustion,src};
+    });
+
+    // ── SIGNAL SCORE ─────────────────────────────────────────
+    const scoredStories=stories.filter(s=>s._nms!=null);
+    const avgNms=scoredStories.length?scoredStories.reduce((a,s)=>a+s._nms,0)/scoredStories.length:0.5;
+    const avgPm=scoredStories.length?scoredStories.reduce((a,s)=>a+(s._ps||0.5),0)/scoredStories.length:0.5;
+    const avgTs=scoredStories.length?scoredStories.reduce((a,s)=>a+(s._ts||0.5),0)/scoredStories.length:0.5;
+    const avgCo=scoredStories.length?scoredStories.reduce((a,s)=>a+(s._coSignal||0),0)/scoredStories.length:0;
+    const signalScore=Math.round((avgNms*0.40+avgPm*0.30+avgTs*0.20+avgCo*0.10)*100);
+
+    // ── TRADE TRANSLATION FIRES ──────────────────────────────
+    // Which tickers had NMS >= 0.62 (trade chip appeared)
+    const tradeFired=m20Tickers.filter(t=>nmsMapSnapshot[t]>=0.62).map(t=>({
+      ticker:t,
+      nms:Math.round((nmsMapSnapshot[t]||0)*100),
+      dir:stories.filter(s=>(s.entities||[]).some(e=>(e.name||'').toUpperCase()===t))
+        .map(s=>s.alphaSignal).find(Boolean)||'neutral'
+    }));
+
+    // ── EXHAUSTION FLAGS ──────────────────────────────────────
+    const exhaustedTickers=m20Tickers.filter(t=>nmsMapSnapshot[t+'_exhaustion']);
+    const exhaustedStories=stories.filter(s=>s._narrativeExhaustion).length;
+
+    // ── COMMAND LAYER SNAPSHOT ────────────────────────────────
+    const cmdActionEl=document.getElementById('cmdActionText');
+    const cmdAction=cmdActionEl?cmdActionEl.innerText:'';
+
+    // ── DIVERGENCE DISTRIBUTION ───────────────────────────────
+    const divDist=stories.slice(0,15).reduce((acc,s)=>{
+      const t=s._divType||'confirm';acc[t]=(acc[t]||0)+1;return acc;
+    },{});
+
+    // ── BUILD CAPTURE RECORD ──────────────────────────────────
+    const capture={
+      id:ts,
+      ts:new Date().toISOString(),
+      topic:currentTopic,
+      regime:reg,
+      signalScore,
+      storyCount:stories.length,
+      tickerData,
+      tradeFired,
+      exhaustedTickers,
+      exhaustedStories,
+      cmdAction,
+      divDist,
+      isAuto:true,  // distinguishes from manual M20 sessions
+      // VIX proxy from regime
+      vixProxy:reg==='Crash Override'?35:reg==='Risk-Off'?25:reg==='Neutral'?18:14,
+    };
+
+    // ── SAVE ──────────────────────────────────────────────────
+    const captures=KV.getJSON(KEYS.AUTO_CAPTURES,[]);
+    // Dedupe: don't save two captures for same topic within 2 hours
+    const recentSameTopic=captures.filter(c=>c.topic===currentTopic&&ts-new Date(c.ts).getTime()<2*3600000);
+    if(recentSameTopic.length>0){
+      console.log('[AutoCapture] Skipped — same topic captured within 2h');
+      return;
+    }
+    captures.push(capture);
+    if(captures.length>_MAX_AUTO_CAPTURES)captures.splice(0,captures.length-_MAX_AUTO_CAPTURES);
+    KV.setJSON(KEYS.AUTO_CAPTURES,captures);
+
+    // ── INIT PRICE OUTCOME RECORDS ────────────────────────────
+    // Create outcome records for each ticker so price fills in later
+    const outcomes=KV.getJSON(KEYS.AUTO_CAPTURE_OUTCOMES,[]);
+    const liveQQQ=_cachedPrices?.QQQ||_cachedPrices?.qqq||null;
+    m20Tickers.forEach(t=>{
+      const td=tickerData[t];
+      if(td&&td.nms!=null){
+        outcomes.push({
+          autoCaptureId:ts,
+          ticker:t,
+          ts:new Date().toISOString(),
+          topic:currentTopic,
+          regime:reg,
+          nmsAtCapture:td.nms,
+          velDeltaAtCapture:td.velDelta,
+          exhaustionAtCapture:td.exhaustion,
+          tradeFiredAtCapture:tradeFired.some(x=>x.ticker===t),
+          signalScoreAtCapture:signalScore,
+          priceAtCapture:_cachedPrices?.[t]||null,
+          qqqPriceAtCapture:liveQQQ,
+          p3d:null,p7d:null,p14d:null,
+          r3d:null,r7d:null,r14d:null,
+          xr3d:null,xr7d:null,xr14d:null,
+        });
+      }
+    });
+    if(outcomes.length>_MAX_AUTO_CAPTURES*20)outcomes.splice(0,outcomes.length-_MAX_AUTO_CAPTURES*20);
+    KV.setJSON(KEYS.AUTO_CAPTURE_OUTCOMES,outcomes);
+
+    // ── VISUAL INDICATOR ──────────────────────────────────────
+    // Subtle pulse on data status bar — no toast, no interruption
+    _showAutoCaptureIndicator(signalScore,tradeFired.length,exhaustedTickers.length);
+    logEvent('auto_capture',{topic:currentTopic,signalScore,tradeFired:tradeFired.length,tickers:Object.keys(tickerData).length});
+    // Record lexicon drift for this session's IC
+    const sessionIC=computeAutoIC('r14d');
+    recordLexiconDrift(stories,sessionIC);
+    checkAutoICAlert();
+
+    console.log(`[AutoCapture] ✓ ${currentTopic} · Score ${signalScore} · ${tradeFired.length} trade signals · ${exhaustedTickers.length} exhausted`);
+  }catch(e){
+    console.warn('[AutoCapture] Failed:',e.message);
+  }
+}
+
+function _showAutoCaptureIndicator(score,tradeCount,exhaustCount){
+  // Add a small auto-capture badge to the data status bar
+  // Pulses briefly then stays as a quiet indicator
+  try{
+    const bar=document.getElementById('dstatusBar');
+    if(!bar)return;
+    let badge=document.getElementById('autoCaptBadge');
+    if(!badge){
+      badge=document.createElement('span');
+      badge.id='autoCaptBadge';
+      badge.style.cssText='display:inline-flex;align-items:center;gap:3px;font-size:8px;font-weight:700;font-family:var(--mono);padding:1px 6px;border-radius:3px;margin-left:6px;transition:all .3s;cursor:default;';
+      bar.appendChild(badge);
+    }
+    const scoreColor=score>=60?'var(--green)':score<=40?'var(--red)':'var(--amber)';
+    badge.style.background=`rgba(0,200,255,.12)`;
+    badge.style.border=`1px solid rgba(0,200,255,.25)`;
+    badge.style.color='var(--acc)';
+    const now=new Date().toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit'});
+    badge.title=`Auto-capture · Score ${score} · ${tradeCount} trade signals · ${exhaustCount} exhausted · ${now}`;
+    badge.innerHTML=`<span style="width:5px;height:5px;border-radius:50%;background:var(--acc);animation:pdotpulse .8s 3;display:inline-block;"></span> ◈ ${score}`;
+    // Dim after 10s
+    setTimeout(()=>{
+      if(badge){badge.style.opacity='.45';badge.style.border='1px solid rgba(0,200,255,.1)';}
+    },10000);
+  }catch{}
+}
+
+// Fill price outcomes for auto-captures on each boot
+function fillAutoCapturePriceOutcomes(){
+  if(window.location.protocol==='file:')return;
+  try{
+    const outcomes=KV.getJSON(KEYS.AUTO_CAPTURE_OUTCOMES,[]);
+    const now=Date.now();
+    let changed=false;
+    const toFetch=new Set();
+    outcomes.forEach(o=>{
+      if(!o.priceAtCapture)return;
+      const age=now-new Date(o.ts).getTime();
+      if(o.r3d==null&&age>3*86400000)toFetch.add(o.ticker);
+      if(o.r7d==null&&age>7*86400000)toFetch.add(o.ticker);
+      if(o.r14d==null&&age>14*86400000)toFetch.add(o.ticker);
+    });
+    if(!toFetch.size)return;
+    // Fetch current prices and compute returns
+    Promise.allSettled([...toFetch].map(async t=>{
+      try{
+        const r=await proxyFetch(`https://query1.finance.yahoo.com/v8/finance/chart/${t}?interval=1d&range=1d`);
+        if(!r.ok)return;
+        const d=await r.json();
+        const price=d?.chart?.result?.[0]?.meta?.regularMarketPrice;
+        if(!price)return;
+        outcomes.forEach(o=>{
+          if(o.ticker!==t||!o.priceAtCapture)return;
+          const age=now-new Date(o.ts).getTime();
+          const ret=Math.round((price-o.priceAtCapture)/o.priceAtCapture*10000)/100;
+          const qqqPrice=_cachedPrices?.QQQ||null;
+          const qqqRet=o.qqqPriceAtCapture&&qqqPrice?Math.round((qqqPrice-o.qqqPriceAtCapture)/o.qqqPriceAtCapture*10000)/100:null;
+          if(o.r3d==null&&age>3*86400000){o.r3d=ret;if(qqqRet!=null)o.xr3d=Math.round((ret-qqqRet)*100)/100;changed=true;}
+          if(o.r7d==null&&age>7*86400000){o.r7d=ret;if(qqqRet!=null)o.xr7d=Math.round((ret-qqqRet)*100)/100;changed=true;}
+          if(o.r14d==null&&age>14*86400000){o.r14d=ret;if(qqqRet!=null)o.xr14d=Math.round((ret-qqqRet)*100)/100;changed=true;}
+        });
+      }catch{}
+    })).then(()=>{
+      if(changed)KV.setJSON(KEYS.AUTO_CAPTURE_OUTCOMES,outcomes);
+    });
+  }catch(e){console.warn('[AutoCapture] fillPriceOutcomes:',e.message);}
+}
+
+// IC computation for auto-captures — separate from manual sessions
+function computeAutoIC(horizon='r14d'){
+  const outcomes=KV.getJSON(KEYS.AUTO_CAPTURE_OUTCOMES,[]);
+  const valid=outcomes.filter(o=>o.nmsAtCapture!=null&&o[horizon]!=null);
+  if(valid.length<5)return null;
+  const xs=valid.map(o=>o.nmsAtCapture);
+  const ys=valid.map(o=>o[horizon]);
+  return _pearsonIC(xs,ys);
+}
+
+// Regime-segmented IC — shows whether NMS predicts better in specific regimes
+function computeAutoICByRegime(horizon='r14d'){
+  const outcomes=KV.getJSON(KEYS.AUTO_CAPTURE_OUTCOMES,[]);
+  const regimes=['Risk-On','Neutral','Risk-Off'];
+  const result={};
+  regimes.forEach(r=>{
+    const seg=outcomes.filter(o=>o.regime===r&&o.nmsAtCapture!=null&&o[horizon]!=null);
+    if(seg.length>=3){
+      result[r]={ic:_pearsonIC(seg.map(o=>o.nmsAtCapture),seg.map(o=>o[horizon])),n:seg.length};
+    }
+  });
+  return result;
+}
+
+// IC trend over time — sliding window to show improvement
+function computeAutoICTrend(horizon='r14d',windowSize=10){
+  const outcomes=KV.getJSON(KEYS.AUTO_CAPTURE_OUTCOMES,[]);
+  const valid=outcomes.filter(o=>o.nmsAtCapture!=null&&o[horizon]!=null)
+    .sort((a,b)=>new Date(a.ts)-new Date(b.ts));
+  if(valid.length<windowSize)return[];
+  const trend=[];
+  for(let i=windowSize;i<=valid.length;i++){
+    const window=valid.slice(i-windowSize,i);
+    const ic=_pearsonIC(window.map(o=>o.nmsAtCapture),window.map(o=>o[horizon]));
+    trend.push({ts:window[window.length-1].ts,ic,n:window.length});
+  }
+  return trend;
+}
+
+// Confidence interval for hit rate (Wilson score interval)
+function _wilsonCI(hits,n,z=1.645){ // 90% CI
+  if(n===0)return{low:0,high:0};
+  const p=hits/n;
+  const denom=1+z*z/n;
+  const center=(p+z*z/(2*n))/denom;
+  const margin=z*Math.sqrt(p*(1-p)/n+z*z/(4*n*n))/denom;
+  return{low:Math.max(0,Math.round((center-margin)*100)),high:Math.min(100,Math.round((center+margin)*100)),p:Math.round(p*100)};
+}
+
+function _pearsonIC(xs,ys){
+  const n=xs.length;
+  if(n<3)return null;
+  const mx=xs.reduce((a,b)=>a+b,0)/n;
+  const my=ys.reduce((a,b)=>a+b,0)/n;
+  const num=xs.reduce((a,x,i)=>a+(x-mx)*(ys[i]-my),0);
+  const den=Math.sqrt(xs.reduce((a,x)=>a+(x-mx)**2,0)*ys.reduce((a,y)=>a+(y-my)**2,0));
+  return den>0?Math.round(num/den*1000)/1000:0;
+}
+
+// Trade translation hit rate with Wilson confidence interval
+function computeTradeHitRate(horizon='r7d'){
+  const outcomes=KV.getJSON(KEYS.AUTO_CAPTURE_OUTCOMES,[]);
+  const traded=outcomes.filter(o=>o.tradeFiredAtCapture&&o[horizon]!=null);
+  if(traded.length<3)return null;
+  const hits=traded.filter(o=>o[horizon]>0).length;
+  const ci=_wilsonCI(hits,traded.length);
+  return{rate:ci.p,low:ci.low,high:ci.high,n:traded.length,hits,reliable:traded.length>=10};
+}
+
+// IC threshold alert
+function checkAutoICAlert(){
+  const ic=computeAutoIC('r14d');
+  if(ic==null)return;
+  const prev=KV.getJSON('sig_last_auto_ic',null);
+  KV.setJSON('sig_last_auto_ic',ic);
+  if(prev==null)return;
+  if(prev<0.05&&ic>=0.05)toast('Auto-capture IC crossed 0.05 — narrative signal is now meaningful','success',6000);
+  else if(prev>=0&&ic<0&&ic<prev-0.03)toast('Auto-capture IC turning negative — model may need recalibration','warning',6000);
+}
+
+// ── SENTIMENT LEXICON DRIFT TRACKER ────────────────────────────────────────────
+// Tracks which FIN_SENT terms appear more in high-IC vs low-IC sessions.
+// After 10+ sessions, surfaces terms worth upweighting/downweighting.
+const _LEXICON_DRIFT_KEY='sig_lex_drift_v1';
+
+function recordLexiconDrift(stories,sessionIC){
+  if(sessionIC==null||Math.abs(sessionIC)<0.02)return;
+  try{
+    const isHighIC=sessionIC>=0.05;
+    const termCounts={};
+    stories.forEach(s=>{
+      const text=((s.headline||'')+' '+(s.summary||'')).toLowerCase();
+      Object.keys(FIN_SENT).forEach(term=>{
+        if(text.includes(term)){
+          if(!termCounts[term])termCounts[term]={highIC:0,lowIC:0,weight:FIN_SENT[term]};
+          if(isHighIC)termCounts[term].highIC++;
+          else termCounts[term].lowIC++;
+        }
+      });
+    });
+    const drift=KV.getJSON(_LEXICON_DRIFT_KEY,{});
+    Object.entries(termCounts).forEach(([term,counts])=>{
+      if(!drift[term])drift[term]={highIC:0,lowIC:0,weight:counts.weight,sessions:0};
+      drift[term].highIC+=counts.highIC;
+      drift[term].lowIC+=counts.lowIC;
+      drift[term].sessions++;
+    });
+    KV.setJSON(_LEXICON_DRIFT_KEY,drift);
+  }catch(e){console.warn('[LexDrift]',e.message);}
+}
+
+function getLexiconDriftInsights(){
+  const drift=KV.getJSON(_LEXICON_DRIFT_KEY,{});
+  const terms=Object.entries(drift).filter(([,d])=>d.highIC+d.lowIC>=5);
+  if(!terms.length)return null;
+  const scored=terms.map(([term,d])=>({
+    term,weight:d.weight,highIC:d.highIC,lowIC:d.lowIC,
+    total:d.highIC+d.lowIC,
+    icRatio:Math.round(d.highIC/(d.highIC+d.lowIC)*100),
+  })).sort((a,b)=>b.icRatio-a.icRatio);
+  return{
+    upweight:scored.filter(t=>t.icRatio>=70&&t.total>=5).slice(0,5),
+    downweight:scored.filter(t=>t.icRatio<=30&&t.total>=5).slice(-5).reverse(),
+    total:terms.length,
+  };
+}
+
 function _getProxyBase(){
   const host=window.location.hostname;
   const isLocal=host==='localhost'||host==='127.0.0.1';
@@ -1241,7 +1575,7 @@ button:focus-visible,a:focus-visible{outline:2px solid var(--acc);outline-offset
         <div class="cmd-block"><div class="cmd-block-hd">▲ Top Narratives</div><div id="cmdDriversList"><div style="font-size:9px;color:var(--t3);">Load stories to populate</div></div></div>
         <div class="cmd-block"><div class="cmd-block-hd">⚠ Top Risks</div><div id="cmdRisksList"><div style="font-size:9px;color:var(--t3);">Load stories to populate</div></div></div>
         <div class="cmd-action"><div class="cmd-action-hd">→ Action</div><div id="cmdActionText" class="cmd-action-line">—</div></div>
-        <div class="cmd-score"><div class="cmd-score-num" id="cmdScoreNum">—</div><div class="cmd-score-lbl">Signal</div><div class="cmd-score-delta" id="cmdScoreDelta"></div></div>
+        <div class="cmd-score"><div class="cmd-score-num" id="cmdScoreNum">—</div><div class="cmd-score-lbl">Signal</div><div class="cmd-score-delta" id="cmdScoreDelta"></div><div id="cmdScoreAlert"></div><div id="cmdScoreSparkline" style="margin-top:2px;"></div></div>
       </div>
       <div class="feed-col" id="feedCol"></div>
       <div class="side-col" role="complementary" aria-label="Signal sidebar">
@@ -1456,6 +1790,19 @@ button:focus-visible,a:focus-visible{outline:2px solid var(--acc);outline-offset
           <div id="icTrendChart" style="padding:.3rem 0;"><div class="empty" style="padding:.5rem;">Accumulating sessions…</div></div>
           <div id="adaptiveWeightsDisplay" style="margin-top:.5rem;"></div>
         </div>
+      </div>
+
+      <!-- AUTO-CAPTURE IC PANEL -->
+      <!-- STRUCTURED PREDICTION LAYER -->
+      <div class="lab-card mb-5">
+        <div class="lab-hd">Signal vs Polymarket · Structured Predictions <span class="lab-hd-act" id="structPredCount">0 resolved</span></div>
+        <div id="structuredPredStats" style="margin-bottom:.6rem;"></div>
+        <div id="structuredPredPanel"><div class="empty" style="padding:.5rem;">Structured predictions generate after Refresh on Finance, Markets, or Top Stories when PM data is loaded.</div></div>
+      </div>
+
+      <div class="lab-card mb-5" id="autoCapPanel">
+        <div class="lab-hd">Auto-Capture Intelligence · Continuous Signal Log <span class="lab-hd-act" id="autoCapCount">0 captures</span></div>
+        <div id="autoCapBody"><div class="empty" style="padding:.5rem;">Auto-captures begin after first Refresh on Finance, Markets, Top Stories, or Technology. No manual entry required.</div></div>
       </div>
 
       <!-- PREDICTIONS LOG -->
@@ -2315,6 +2662,7 @@ function renderM20TrackerForm(){
             <td style="padding:4px 6px;text-align:center;font-family:var(--mono);font-weight:700;color:${nmsColor_};" title="${nmsSrcTitle}">
               ${nmsVal!=null?nmsVal:'—'}${nmsSrcLabel?`<span style="font-size:8px;color:var(--t3);margin-left:2px;" title="${nmsSrcTitle}">${nmsSrcLabel}</span>`:''}
               ${velLabel?`<div style="font-size:7px;font-weight:700;color:${velColor};margin-top:1px;" title="Velocity delta: fresh (<6h) vs all stories. ${freshCount!=null?freshCount+' fresh stories':''}">${velLabel}</div>`:''}
+              ${_nmsSparkline(t)}
             </td>
             <td class="stat-lbl">
               <input type="number" min="1" max="20" step="1"
@@ -2491,6 +2839,99 @@ function exportM20Data(){
 
 // ── ITEM 1: M20 Brief generator ──────────────────────────────
 const _M20_BRIEF_CACHE='sig_m20brief_v1';
+
+// ═══════════════════════════════════════════════════════════
+// M20 SESSION PRE-BRIEF GENERATOR
+// One button generates a Thursday-ready session brief:
+// regime, top/bottom NMS tickers, exit clocks, sector
+// concentration, capital ladder recommendation.
+// Saves 10 min per biweekly session.
+// ═══════════════════════════════════════════════════════════
+async function generateSessionPreBrief(){
+  if(!API_KEY||API_KEY.length<20){toast('Enter Gemini API key first','warning',2500);return;}
+  const el=document.getElementById('sessionPreBriefOutput');
+  if(el)el.innerHTML='<div style="font-size:10px;color:var(--t3);padding:.5rem;">Generating session brief…</div>';
+
+  // Gather all data
+  const reg=typeof getEffectiveRegime==='function'?getEffectiveRegime():regime;
+  const daysLeft=daysToNextThursday();
+  const isThurs=new Date().getDay()===4;
+  const sessions=getM20Sessions();
+  const clocks=getM20ExitClocks();
+  const allTickers=[...new Set([...m20Tickers,...extTickers])];
+
+  // NMS per ticker
+  const tickerNmsCtx=allTickers.map(t=>{
+    const nms=nmsMap&&nmsMap[t]!=null?Math.round(nmsMap[t]*100):null;
+    const vel=nmsMap&&nmsMap[t+'_velDelta']!=null?nmsMap[t+'_velDelta']:null;
+    const exh=nmsMap&&nmsMap[t+'_exhaustion']?'⏳':'' ;
+    const iv=_ivData&&_ivData[t]?.iv?`IV:${_ivData[t].iv}%`:'';
+    return`${t}: NMS ${nms!=null?nms:'?'}${exh} ${vel!=null?(vel>0.08?'↑':'↓ '):' '}${iv}`;
+  }).join('\n');
+
+  // Exit clock status
+  const clockCtx=clocks.length?clocks.map(c=>{
+    const iv=_ivData&&_ivData[c.ticker]?.iv;
+    const threshold=iv!=null?(iv>=60?5:iv<35?3:4):4;
+    return`${c.ticker}: Clock ${c.clockSession}/${threshold}${c.clockSession>=threshold?' ⚠ EXIT TRIGGER':''}`;
+  }).join('\n'):'No exit clocks active';
+
+  // Sector concentration
+  const SECTOR_MAP={VRT:'Semis',GEV:'Semis',KLAC:'Semis',LRCX:'Semis',AVGO:'Semis',ANET:'Semis',COHR:'Semis',ETN:'Semis',SNDK:'Semis',LITE:'Semis',PANW:'Software',FSLY:'Software',CAT:'Industrial',PH:'Industrial',GE:'Industrial',CRSP:'Biotech',LLY:'Biotech',VRTX:'Biotech',IBKR:'Finance',BE:'Energy'};
+  const sectorCounts={};
+  m20Tickers.forEach(t=>{const s=SECTOR_MAP[t]||'Other';sectorCounts[s]=(sectorCounts[s]||0)+1;});
+  const sectorCtx=Object.entries(sectorCounts).sort((a,b)=>b[1]-a[1]).map(([s,n])=>`${s}: ${n}/${m20Tickers.length} (${Math.round(n/m20Tickers.length*100)}%)`).join(', ');
+
+  // Signal score
+  const signalScore=document.getElementById('cmdScoreNum')?.textContent||'?';
+  const scoreDelta=document.getElementById('cmdScoreDelta')?.textContent||'';
+
+  // Auto-capture IC
+  const ic14=computeAutoIC('r14d');
+  const halfLifeH=Math.round(_getDecayHalfLifeMs()/3600000);
+
+  try{
+    const raw=await geminiSynth(
+`You are generating a Thursday M20 session brief for a momentum portfolio manager.
+
+REGIME: ${reg} (NMS decay half-life: ${halfLifeH}h)
+SESSION TIMING: ${isThurs?'TODAY IS THURSDAY — session day':'${daysLeft} days to next Thursday'}
+SIGNAL SCORE: ${signalScore}/100 ${scoreDelta}
+AUTO-CAPTURE IC (14d): ${ic14!=null?ic14:'insufficient data'}
+
+M20 TICKER NMS (current session):
+${tickerNmsCtx}
+
+EXIT CLOCK STATUS (ATR-adjusted):
+${clockCtx}
+
+SECTOR CONCENTRATION:
+${sectorCtx}
+
+Generate a concise Thursday session brief with these sections:
+1. REGIME CALL (1 sentence: current regime + what it means for capital deployment)
+2. TOP 5 NARRATIVE SUPPORT (tickers with NMS≥62, ranked — include any exhaustion warnings)
+3. BOTTOM 5 WATCH (tickers with NMS≤42 or exit clock active — flag any exit triggers)
+4. SECTOR RISK (any concentration >40% warrants a warning about tide risk vs stock alpha)
+5. SESSION ACTION (2-3 bullet points: specific capital ladder moves to consider)
+6. KEY RISK (one sentence: what could invalidate this session's signal)
+
+Be direct. No hedging. Write for someone who will execute trades today.`,
+      'Return a clean, formatted session brief. Use emoji sparingly. Be direct.',
+      _TOK.lg, false
+    );
+
+    logEvent('session_pre_brief',{regime:reg,signalScore,daysLeft});
+    if(el){
+      el.innerHTML=`<div style="font-size:10px;line-height:1.7;color:var(--t2);white-space:pre-wrap;font-family:var(--sans);">${esc(raw)}</div>
+        <div style="font-size:8px;color:var(--t3);margin-top:.5rem;border-top:1px solid var(--b1);padding-top:.4rem;">Generated ${new Date().toLocaleTimeString()} · Regime: ${reg} · Decay: ${halfLifeH}h half-life</div>`;
+    }
+    return raw;
+  }catch(e){
+    console.warn('[SessionPreBrief]',e.message);
+    if(el)el.innerHTML=`<div style="font-size:10px;color:var(--red);">Brief generation failed: ${e.message}</div>`;
+  }
+}
 
 async function generateM20Brief(force=false){
   if(!API_KEY||API_KEY.length<20){console.warn('[SIGNAL] generateM20Brief: no API key');return;}
@@ -3634,6 +4075,7 @@ function boot(){
   renderLabData();
   fillPriceOutcomes();
   setTimeout(autoResolvePredictions, 3000); // check for resolved markets
+  setTimeout(fillAutoCapturePriceOutcomes, 5000); // fill auto-capture price outcomes
   // Restore Ask Anything history
   try{
     const askLog=JSON.parse(localStorage.getItem('sig_ask_log')||'[]');
@@ -3746,6 +4188,17 @@ function renderDiagnostics(){
     <div style="border-top:1px solid var(--b1);margin:.5rem 0;"></div>
     <div style="font-size:9px;font-weight:700;color:var(--t3);letter-spacing:.06em;text-transform:uppercase;margin-bottom:.4rem;">Recent Events (${log.length} total)</div>
     ${lastEvents||'<div style="color:var(--t3);font-size:9px;">No events logged yet</div>'}
+    ${(()=>{
+      const ld=getLexiconDriftInsights();
+      if(!ld)return'<div style="border-top:1px solid var(--b1);margin:.5rem 0;"></div><div style="font-size:8px;color:var(--t3);">Lexicon drift: needs 5+ term appearances across sessions</div>';
+      const upHtml=ld.upweight.map(t=>`<span style="color:var(--green);font-size:8px;">${t.term}(${t.icRatio}%)</span>`).join(' ');
+      const dnHtml=ld.downweight.map(t=>`<span style="color:var(--red);font-size:8px;">${t.term}(${t.icRatio}%)</span>`).join(' ');
+      return`<div style="border-top:1px solid var(--b1);margin:.5rem 0;"></div>
+        <div style="font-size:9px;font-weight:700;color:var(--t3);letter-spacing:.06em;text-transform:uppercase;margin-bottom:.3rem;">Lexicon Drift · ${ld.total} terms tracked</div>
+        ${upHtml?`<div style="margin-bottom:.2rem;"><span style="font-size:8px;color:var(--t3);">↑ High-IC terms: </span>${upHtml}</div>`:''}
+        ${dnHtml?`<div><span style="font-size:8px;color:var(--t3);">↓ Low-IC terms: </span>${dnHtml}</div>`:''}
+        <div style="font-size:7px;color:var(--t3);margin-top:.2rem;">Terms appearing more in high-IC sessions warrant upweighting in FIN_SENT</div>`;
+    })()}
   `;
 }
 
@@ -4124,11 +4577,23 @@ function storyAgeMs(timeAgoStr){
   if(m[2]==='h')return n*3600000;
   return n*86400000;
 }
-// Exponential decay weight: half-life = 12 hours
-// Stories 0h old → weight 1.0; 12h → 0.5; 24h → 0.25; 48h → 0.06
+// Exponential decay weight: half-life is REGIME-CONDITIONAL
+// Markets reprice faster in Risk-Off — stale news is genuinely worthless sooner
+// Risk-On: 16h half-life (positive narrative carries longer)
+// Neutral: 12h half-life (standard)
+// Risk-Off: 8h half-life (fast repricing, recency premium)
+// Crash Override: 5h half-life (hours matter, not days)
+function _getDecayHalfLifeMs(){
+  const reg=typeof getEffectiveRegime==='function'?getEffectiveRegime():
+            (typeof regime!=='undefined'?regime:'Neutral');
+  if(reg==='Crash Override')return 5*3600000;
+  if(reg==='Risk-Off')return 8*3600000;
+  if(reg==='Risk-On')return 16*3600000;
+  return 12*3600000; // Neutral default
+}
 function narrativeDecayWeight(timeAgoStr){
   const ageMs=storyAgeMs(timeAgoStr);
-  const HALF_LIFE_MS=12*3600000; // 12 hours
+  const HALF_LIFE_MS=_getDecayHalfLifeMs();
   return Math.exp(-Math.LN2*(ageMs/HALF_LIFE_MS));
 }
 // Compute per-ticker delta: avg NMS of fresh stories (< 6h) vs all stories
@@ -5254,29 +5719,49 @@ function computeAdaptiveWeights(captures){
   const compICs=computeComponentICs(outcomes);
   if(!Object.keys(compICs).length)return null;
   // Map IC to weight: positive IC = signal has value; weight proportional to IC²
-  // IC² penalizes near-zero ICs more than linear would
   const signalICs={
     trend: Math.max(0,compICs.trend?.ic||0),
     pm:    Math.max(0,compICs.pm?.ic||0),
     sent:  Math.max(0,compICs.sent?.ic||0),
   };
+
+  // ── PM ACCURACY BOOST (Loop 1 extended) ──────────────────
+  // If PM delta signal (P) consistently drove correct structured predictions,
+  // boost its weight beyond what price IC alone suggests.
+  // This closes the loop between prediction accuracy and NMS weights.
+  const spPreds=KV.getJSON(KEYS.STRUCTURED_PREDS,[]);
+  const spResolved=spPreds.filter(p=>p.resolved&&p.signal_was_right!=null&&p.pm_was_right!=null);
+  if(spResolved.length>=5){
+    // Cases where divergent prediction (SIGNAL differed from PM) was correct
+    // These cases indicate PM delta signal had genuine predictive value
+    const divergentRight=spResolved.filter(p=>p.divergence_signal&&p.signal_was_right&&!p.pm_was_right).length;
+    const divergentTotal=spResolved.filter(p=>p.divergence_signal).length;
+    if(divergentTotal>=3){
+      const pmAlphaRate=divergentRight/divergentTotal; // rate SIGNAL beat PM
+      // If SIGNAL beats PM >60% of divergent cases, boost PM delta weight
+      if(pmAlphaRate>=0.6){
+        const boost=Math.min(0.08,(pmAlphaRate-0.5)*0.2); // max 8% boost
+        signalICs.pm=Math.min(0.9,signalICs.pm+boost);
+        console.log(`[AdaptiveWeights] PM alpha boost +${Math.round(boost*100)}% (beat PM ${Math.round(pmAlphaRate*100)}% of divergent cases)`);
+      }
+    }
+  }
+
   const total=Object.values(signalICs).reduce((a,v)=>a+v*v,0);
-  if(total<0.001)return null; // all ICs near zero — use prior
-  // Normalize to weights summing to ~0.85 (leave 0.15 for co-occurrence floor)
+  if(total<0.001)return null;
   const scale=0.85/total;
   const adaptedWeights={
     trend: Math.round(Math.max(0.08,signalICs.trend*signalICs.trend*scale)*100)/100,
     pm:    Math.round(Math.max(0.20,signalICs.pm*signalICs.pm*scale)*100)/100,
     sent:  Math.round(Math.max(0.04,signalICs.sent*signalICs.sent*scale)*100)/100,
-    co:    0.15, // co-occurrence floor — cluster signal always has value
+    co:    0.15,
   };
-  // Re-normalize to exactly 1.0
   const wSum=Object.values(adaptedWeights).reduce((a,b)=>a+b,0);
   Object.keys(adaptedWeights).forEach(k=>{adaptedWeights[k]=Math.round(adaptedWeights[k]/wSum*100)/100;});
   adaptedWeights._empirical=true;
   adaptedWeights._captureN=captures.length;
   adaptedWeights._componentICs=compICs;
-  // Store for transparency
+  adaptedWeights._pmAlphaBoost=spResolved.length>=5;
   try{localStorage.setItem(_ADAPTIVE_WEIGHTS_KEY,JSON.stringify({ts:Date.now(),weights:adaptedWeights,compICs}));}catch{}
   return adaptedWeights;
 }
@@ -5758,6 +6243,338 @@ function loadAutoPredictions(){
     const s=JSON.parse(localStorage.getItem(_AUTO_PRED_KEY)||'{}');
     if(s.preds&&Date.now()-s.ts<20*3600000)renderAutoPredictions(s.preds);
   }catch{}
+}
+
+// ═══════════════════════════════════════════════════════════
+// STRUCTURED PREDICTION LAYER
+// Generates {event, signal_prob, pm_prob, event_type, timestamp}
+// for top 3 matched Polymarket markets after each Refresh.
+// Tracks whether SIGNAL leads, lags, or matches PM.
+// Self-refining: calibration error feeds back into prompts.
+// ═══════════════════════════════════════════════════════════
+
+// Event taxonomy — structured categories for alpha discovery by type
+const EVENT_TYPES={
+  monetary_policy:['fed','rate','fomc','powell','cut','hike','basis points','inflation','cpi','pce'],
+  earnings:['earnings','revenue','eps','guidance','beat','miss','quarter','profit','sales'],
+  geopolitical:['war','conflict','sanctions','ceasefire','treaty','invasion','military','nato','tariff'],
+  regulatory:['sec','antitrust','approval','ban','investigation','ruling','regulation','fine','legislation'],
+  macro_data:['gdp','unemployment','jobs','payroll','pmi','ism','retail','housing','deficit'],
+  market_structure:['ipo','merger','acquisition','bankruptcy','delisting','short squeeze','options'],
+};
+
+function classifyEventType(text){
+  if(!text)return'other';
+  const lower=text.toLowerCase();
+  for(const[type,keywords]of Object.entries(EVENT_TYPES)){
+    if(keywords.some(k=>lower.includes(k)))return type;
+  }
+  return'other';
+}
+
+// Get calibration context for prompt feedback
+function getCalibrationContext(){
+  const preds=KV.getJSON(KEYS.STRUCTURED_PREDS,[]);
+  const resolved=preds.filter(p=>p.resolved&&p.outcome!=null&&p.signal_prob!=null);
+  if(resolved.length<5)return'';
+  // Compute calibration error per bucket
+  const buckets={};
+  resolved.forEach(p=>{
+    const bucket=Math.round(p.signal_prob/10)*10;
+    if(!buckets[bucket])buckets[bucket]={sum:0,count:0,hits:0};
+    buckets[bucket].sum+=p.signal_prob;
+    buckets[bucket].count++;
+    buckets[bucket].hits+=p.outcome?1:0;
+  });
+  const errors=Object.entries(buckets).filter(([,b])=>b.count>=2).map(([bucket,b])=>{
+    const predicted=parseFloat(bucket);
+    const actual=Math.round(b.hits/b.count*100);
+    const error=predicted-actual;
+    return`${predicted}% predicted → ${actual}% actual (${error>0?'overconfident by '+error+'%':'underconfident by '+Math.abs(error)+'%'})`;
+  });
+  if(!errors.length)return'';
+  const avgErr=resolved.reduce((a,p)=>{
+    const err=p.signal_prob-(p.outcome?100:0);return a+err;},0)/resolved.length;
+  return`\nYour recent calibration (${resolved.length} resolved predictions): ${errors.slice(0,3).join('; ')}. Average error: ${Math.round(avgErr)}% ${avgErr>0?'(you run overconfident — adjust probabilities DOWN)':'(you run underconfident — adjust probabilities UP)'}.`;
+}
+
+// Match stories to PM markets by keyword overlap
+function matchStoriesToPM(stories,pmData){
+  if(!pmData||!pmData.length)return[];
+  const matches=[];
+  pmData.slice(0,20).forEach(market=>{
+    const q=(market.question||'').toLowerCase();
+    const relevantStories=stories.filter(s=>{
+      const h=(s.headline||'').toLowerCase();
+      const words=q.split(/\s+/).filter(w=>w.length>4);
+      return words.filter(w=>h.includes(w)).length>=2;
+    });
+    if(relevantStories.length>0){
+      const avgNms=relevantStories.reduce((a,s)=>a+(s._nms||0.5),0)/relevantStories.length;
+      matches.push({market,stories:relevantStories,avgNms,pmProb:pmProb(market)});
+    }
+  });
+  return matches.sort((a,b)=>b.avgNms-a.avgNms).slice(0,5);
+}
+
+async function generateStructuredPredictions(){
+  if(!stories.length||!_cachedPM||!_cachedPM.length)return[];
+  // Dedup: don't regenerate within 4 hours
+  const existing=KV.getJSON(KEYS.STRUCTURED_PREDS,[]);
+  const recent=existing.filter(p=>!p.resolved&&Date.now()-new Date(p.timestamp).getTime()<4*3600000);
+  if(recent.length>=3){console.log('[StructuredPred] Skipped — recent preds exist');return recent;}
+
+  const matches=matchStoriesToPM(stories,_cachedPM);
+  if(!matches.length)return[];
+
+  const calCtx=getCalibrationContext();
+  const topStories=stories.slice(0,4).map(s=>`"${s.headline}" NMS:${Math.round((s._nms||0.5)*100)}`).join('\n');
+  const matchCtx=matches.slice(0,4).map(m=>`Market: "${(m.market.question||'').slice(0,70)}" PM:${m.pmProb}% NMS:${Math.round(m.avgNms*100)} Stories:${m.stories.length}`).join('\n');
+
+  try{
+    const raw=await geminiSynth(
+`You are a superforecaster generating structured probability estimates to be tracked against Polymarket.${calCtx}
+
+Current narrative intelligence:
+${topStories}
+
+Matched Polymarket markets (with current crowd probability):
+${matchCtx}
+
+Regime: ${typeof getEffectiveRegime==='function'?getEffectiveRegime():regime}
+NMI: ${_currentNMI?_currentNMI.nmi+'/100':'unknown'}
+
+For each of the top 3 markets, generate a SIGNAL probability estimate based on narrative momentum.
+If narrative strongly supports YES: push above PM prob. If narrative diverges: push below.
+Be calibrated — use full range 20-85%, not just 50-70%.${calCtx?'\nApply the calibration correction above.':''}
+
+Return ONLY valid JSON array:
+[{
+  "event":"string (the specific binary question, max 80 chars)",
+  "signal_prob":number(20-85, your NMS-derived probability YES resolves),
+  "pm_prob":number(current Polymarket % as shown above),
+  "pm_market_id":"string (copy exactly from market data)",
+  "event_type":"monetary_policy|earnings|geopolitical|regulatory|macro_data|market_structure|other",
+  "horizon_days":number(7 or 14),
+  "narrative_basis":"string (1 sentence: which stories drive this estimate)",
+  "divergence_signal":boolean(true if |signal_prob - pm_prob| > 10)
+}]`,
+      'Return only valid JSON array.',_TOK.md,true
+    );
+
+    const parsed=JSON.parse(raw.replace(/```json?|```/g,'').trim());
+    if(!Array.isArray(parsed))return[];
+
+    const ts=new Date().toISOString();
+    const results=parsed.slice(0,3).map(p=>({
+      id:'sp_'+Date.now()+'_'+Math.random().toString(36).slice(2,5),
+      timestamp:ts,
+      topic:currentTopic,
+      regime:typeof getEffectiveRegime==='function'?getEffectiveRegime():regime,
+      event:p.event||'',
+      signal_prob:Math.max(20,Math.min(85,Math.round(p.signal_prob||50))),
+      pm_prob:Math.max(1,Math.min(99,Math.round(p.pm_prob||50))),
+      pm_market_id:p.pm_market_id||null,
+      event_type:p.event_type||classifyEventType(p.event),
+      horizon_days:p.horizon_days||14,
+      narrative_basis:p.narrative_basis||'',
+      divergence_signal:!!(p.divergence_signal),
+      prompt_version:getCurrentPromptVersion(),
+      // Resolution fields (filled later)
+      resolved:false,
+      outcome:null,
+      resolution_ts:null,
+      pm_prob_at_resolution:null,
+      lead_time_days:null,
+      lead_type:null,
+      pm_repriced_toward_signal:false,
+      pm_reprice_magnitude:null,
+      confidence_edge:null,
+      signal_was_right:null,
+      pm_was_right:null,
+    }));
+
+    // Merge into structured preds store
+    results.forEach(r=>existing.push(r));
+    if(existing.length>300)existing.splice(0,existing.length-300);
+    KV.setJSON(KEYS.STRUCTURED_PREDS,existing);
+
+    logEvent('structured_pred',{count:results.length,divergent:results.filter(r=>r.divergence_signal).length});
+    _renderStructuredPredPanel(results);
+    return results;
+  }catch(e){console.warn('[StructuredPred]',e.message);return[];}
+}
+
+// Resolve a structured prediction
+function resolveStructuredPred(id, outcome, pmProbNow){
+  const preds=KV.getJSON(KEYS.STRUCTURED_PREDS,[]);
+  const pred=preds.find(p=>p.id===id);
+  if(!pred)return;
+  pred.resolved=true;
+  pred.outcome=outcome; // true=YES, false=NO
+  pred.resolution_ts=new Date().toISOString();
+  pred.pm_prob_at_resolution=pmProbNow||null;
+  const ageDays=Math.round((new Date(pred.resolution_ts)-new Date(pred.timestamp))/(86400000));
+
+  // Was SIGNAL directionally right vs PM?
+  const signalYes=pred.signal_prob>50;
+  const pmYes=pred.pm_prob>50;
+  pred.signal_was_right=(signalYes===outcome);
+  pred.pm_was_right=(pmYes===outcome);
+
+  // ── ENHANCED LEAD-TIME DETECTION ──────────────────────────
+  // Case 1: SIGNAL diverged from PM AND SIGNAL was right, PM was wrong
+  // → Classic lead: narrative moved before crowd
+  if(pred.divergence_signal&&pred.signal_was_right&&!pred.pm_was_right){
+    pred.lead_time_days=ageDays;
+    pred.lead_type='signal_led';
+  }
+  // Case 2: SIGNAL diverged from PM, outcome was YES
+  // Check if PM repriced toward SIGNAL before resolution
+  // (PM prob at resolution closer to SIGNAL's estimate than original PM prob)
+  if(pred.divergence_signal&&pmProbNow!=null){
+    const originalDiff=Math.abs(pred.signal_prob-pred.pm_prob);
+    const finalDiff=Math.abs(pred.signal_prob-pmProbNow);
+    const pmMovedTowardSignal=finalDiff<originalDiff-10; // PM moved 10pp+ toward SIGNAL
+    if(pmMovedTowardSignal){
+      pred.pm_repriced_toward_signal=true;
+      pred.pm_reprice_magnitude=Math.round(originalDiff-finalDiff); // pp PM moved toward SIGNAL
+      if(!pred.lead_time_days)pred.lead_time_days=ageDays;
+      if(!pred.lead_type)pred.lead_type='pm_repriced';
+    }
+  }
+  // Case 3: Both SIGNAL and PM were directionally same but SIGNAL had higher confidence
+  // and was correct — partial lead signal
+  if(!pred.lead_type&&pred.signal_was_right&&pred.pm_was_right){
+    const signalEdge=outcome?(pred.signal_prob-pred.pm_prob):(pred.pm_prob-pred.signal_prob);
+    if(signalEdge>=10){
+      pred.lead_type='confidence_edge';
+      pred.confidence_edge=signalEdge;
+    }
+  }
+
+  KV.setJSON(KEYS.STRUCTURED_PREDS,preds);
+  // Update prompt version accuracy
+  _recordPromptVersionOutcome(pred.prompt_version,pred.signal_was_right);
+  renderLabData();
+  const leadNote=pred.lead_time_days?` · ${pred.lead_time_days}d lead`:'';
+  const repriceNote=pred.pm_repriced_toward_signal?` · PM repriced ${pred.pm_reprice_magnitude}pp toward SIGNAL`:'';
+  toast(`Prediction resolved · SIGNAL ${pred.signal_was_right?'✓ correct':'✗ wrong'}${leadNote}${repriceNote}`,'info',4000);
+}
+
+// Compute structured prediction analytics
+// ── PROMPT VERSIONING (Loop 4) ────────────────────────────
+// Current prompt version — increment when enrichment prompts change
+// This lets Factor Lab track IC by prompt version to measure improvements
+const _CURRENT_PROMPT_VERSION=1;
+
+function getCurrentPromptVersion(){return _CURRENT_PROMPT_VERSION;}
+
+function _recordPromptVersionOutcome(version,wasRight){
+  if(version==null||wasRight==null)return;
+  try{
+    const versions=KV.getJSON(KEYS.PROMPT_VERSIONS,{});
+    if(!versions[version])versions[version]={n:0,hits:0,ic_sum:0,ts_first:new Date().toISOString()};
+    versions[version].n++;
+    if(wasRight)versions[version].hits++;
+    KV.setJSON(KEYS.PROMPT_VERSIONS,versions);
+  }catch{}
+}
+
+function getPromptVersionStats(){
+  const versions=KV.getJSON(KEYS.PROMPT_VERSIONS,{});
+  return Object.entries(versions).map(([v,d])=>({
+    version:parseInt(v),
+    n:d.n,
+    acc:d.n>=3?Math.round(d.hits/d.n*100):null,
+    since:d.ts_first,
+  })).sort((a,b)=>a.version-b.version);
+}
+
+function computeStructuredPredStats(){
+  const preds=KV.getJSON(KEYS.STRUCTURED_PREDS,[]);
+  const resolved=preds.filter(p=>p.resolved&&p.outcome!=null);
+  if(!resolved.length)return null;
+  // Overall accuracy
+  const signalHits=resolved.filter(p=>p.signal_was_right).length;
+  const pmHits=resolved.filter(p=>p.pm_was_right).length;
+  // Divergent predictions (where SIGNAL differed from PM by >10%)
+  const divergent=resolved.filter(p=>p.divergence_signal);
+  const divergentSignalHits=divergent.filter(p=>p.signal_was_right).length;
+  // Enhanced lead-time breakdown by lead_type
+  const leadCases=resolved.filter(p=>p.lead_time_days!=null);
+  const avgLead=leadCases.length?Math.round(leadCases.reduce((a,p)=>a+p.lead_time_days,0)/leadCases.length):null;
+  const signalLedCases=resolved.filter(p=>p.lead_type==='signal_led');
+  const repricedCases=resolved.filter(p=>p.lead_type==='pm_repriced');
+  const confEdgeCases=resolved.filter(p=>p.lead_type==='confidence_edge');
+  const avgRepriceMag=repricedCases.length?Math.round(repricedCases.reduce((a,p)=>a+(p.pm_reprice_magnitude||0),0)/repricedCases.length):null;
+  // Per-event-type calibration (Brier score per type)
+  const byType={};
+  resolved.forEach(p=>{
+    const t=p.event_type||'other';
+    if(!byType[t])byType[t]={signal:0,pm:0,n:0,brierSum:0};
+    byType[t].n++;
+    if(p.signal_was_right)byType[t].signal++;
+    if(p.pm_was_right)byType[t].pm++;
+    byType[t].brierSum+=(p.signal_prob/100-(p.outcome?1:0))**2;
+  });
+  Object.values(byType).forEach(d=>{d.brier=d.n?Math.round(d.brierSum/d.n*1000)/1000:null;});
+  // Overall Brier score
+  const brierScores=resolved.map(p=>(p.signal_prob/100-(p.outcome?1:0))**2);
+  const brier=Math.round(brierScores.reduce((a,b)=>a+b,0)/brierScores.length*1000)/1000;
+  // Calibration curve per probability bucket
+  const calibBuckets={};
+  resolved.forEach(p=>{
+    const bucket=Math.round(p.signal_prob/10)*10;
+    if(!calibBuckets[bucket])calibBuckets[bucket]={predicted:bucket,hits:0,n:0};
+    calibBuckets[bucket].n++;
+    if(p.outcome)calibBuckets[bucket].hits++;
+  });
+  Object.values(calibBuckets).forEach(b=>{b.actual=b.n>=2?Math.round(b.hits/b.n*100):null;});
+  // Prompt version accuracy
+  const promptVersionStats=getPromptVersionStats();
+  return{
+    n:resolved.length,
+    signalAcc:Math.round(signalHits/resolved.length*100),
+    pmAcc:Math.round(pmHits/resolved.length*100),
+    divergentN:divergent.length,
+    divergentSignalAcc:divergent.length?Math.round(divergentSignalHits/divergent.length*100):null,
+    avgLeadDays:avgLead,
+    leadCases:leadCases.length,
+    signalLedN:signalLedCases.length,
+    repricedN:repricedCases.length,
+    avgRepriceMag,
+    confEdgeN:confEdgeCases.length,
+    byType,
+    brier,
+    calibBuckets,
+    promptVersionStats,
+  };
+}
+
+function _renderStructuredPredPanel(preds){
+  const el=document.getElementById('structuredPredPanel');
+  if(!el||!preds||!preds.length)return;
+  el.innerHTML=preds.map(p=>{
+    const diff=p.signal_prob-p.pm_prob;
+    const diffColor=Math.abs(diff)>=10?(diff>0?'var(--green)':'var(--red)'):'var(--t3)';
+    const etLabel={monetary_policy:'💰 Monetary',earnings:'📊 Earnings',geopolitical:'🌐 Geopolitical',regulatory:'⚖️ Regulatory',macro_data:'📈 Macro',market_structure:'🏛️ Market',other:'◎ Other'}[p.event_type]||'◎ Other';
+    return`<div style="background:var(--s3);border:1px solid ${p.divergence_signal?'rgba(0,200,255,.25)':'var(--b1)'};border-radius:6px;padding:.65rem .85rem;margin-bottom:6px;">
+      <div style="font-size:9px;color:var(--t3);margin-bottom:.3rem;">${etLabel} · ${p.horizon_days}d · ${new Date(p.timestamp).toLocaleDateString('en-US',{month:'short',day:'numeric'})}</div>
+      <div style="font-size:11px;color:var(--t2);line-height:1.4;margin-bottom:.4rem;">${esc(p.event)}</div>
+      <div style="display:flex;align-items:center;gap:.75rem;flex-wrap:wrap;">
+        <div style="text-align:center;"><div style="font-size:16px;font-weight:800;font-family:var(--mono);color:var(--acc);">${p.signal_prob}%</div><div style="font-size:7px;color:var(--t3);text-transform:uppercase;letter-spacing:.06em;">SIGNAL</div></div>
+        <div style="font-size:10px;color:${diffColor};font-weight:700;">${diff>0?'↑':'↓'} ${Math.abs(diff)}% vs PM</div>
+        <div style="text-align:center;"><div style="font-size:16px;font-weight:800;font-family:var(--mono);color:var(--t3);">${p.pm_prob}%</div><div style="font-size:7px;color:var(--t3);text-transform:uppercase;letter-spacing:.06em;">POLYMARKET</div></div>
+        ${p.divergence_signal?'<span style="font-size:8px;font-weight:700;color:var(--acc);border:1px solid rgba(0,200,255,.3);padding:1px 5px;border-radius:3px;">⚡ DIVERGE</span>':''}
+      </div>
+      <div style="font-size:9px;color:var(--t3);margin-top:.35rem;">${esc(p.narrative_basis||'')}</div>
+      ${!p.resolved?`<div style="display:flex;gap:6px;margin-top:.5rem;">
+        <button onclick="resolveStructuredPred('${p.id}',true,null)" style="font-size:9px;padding:2px 8px;background:rgba(0,230,118,.1);color:var(--green);border:1px solid rgba(0,230,118,.2);border-radius:3px;cursor:pointer;">✓ YES resolved</button>
+        <button onclick="resolveStructuredPred('${p.id}',false,null)" style="font-size:9px;padding:2px 8px;background:rgba(255,69,69,.08);color:var(--red);border:1px solid rgba(255,69,69,.15);border-radius:3px;cursor:pointer;">✗ NO resolved</button>
+      </div>`:`<div style="font-size:9px;margin-top:.35rem;color:${p.signal_was_right?'var(--green)':'var(--red)'};">${p.signal_was_right?'✓ SIGNAL correct':'✗ SIGNAL wrong'}${p.pm_was_right!==null?` · PM ${p.pm_was_right?'correct':'wrong'}`:''}</div>`}
+    </div>`;
+  }).join('');
 }
 
 function computeNMI(clusters,pmData){
@@ -6373,7 +7190,7 @@ function renderCommandLayer(data){
     const scoreColor=signalScore>=60?'var(--green)':signalScore<=40?'var(--red)':'var(--amber)';
     scoreEl.style.color=scoreColor;
   }
-  // Delta vs prior session
+  // Delta vs prior session + historical tracking
   if(deltaEl){
     try{
       const prev=JSON.parse(localStorage.getItem('sig_last_signal_score')||'null');
@@ -6384,6 +7201,28 @@ function renderCommandLayer(data){
         deltaEl.style.color=delta>0?'var(--green)':delta<0?'var(--red)':'var(--t3)';
       }else{deltaEl.textContent='first session';}
     }catch{deltaEl.textContent='';}
+    // Store in history array (last 20 scores with timestamps)
+    try{
+      const hist=JSON.parse(localStorage.getItem('sig_score_history')||'[]');
+      const now=Date.now();
+      // Dedupe: don't add if last entry was within 30 min
+      const last=hist.length?hist[hist.length-1]:null;
+      if(!last||now-last.ts>30*60000){
+        hist.push({ts:now,score:signalScore,regime:typeof getEffectiveRegime==='function'?getEffectiveRegime():regime});
+        if(hist.length>20)hist.splice(0,hist.length-20);
+        localStorage.setItem('sig_score_history',JSON.stringify(hist));
+      }
+      // Render sparkline in cmd-score block
+      _renderScoreSparkline(hist,signalScore);
+      // Alert on 3-session declining trend
+      if(hist.length>=3){
+        const last3=hist.slice(-3).map(h=>h.score);
+        if(last3[0]>last3[1]&&last3[1]>last3[2]&&last3[0]-last3[2]>=10){
+          const declineEl=document.getElementById('cmdScoreAlert');
+          if(declineEl)declineEl.innerHTML='<div style="font-size:7px;color:var(--amber);margin-top:2px;">⚠ 3-session decline</div>';
+        }
+      }
+    }catch{}
     try{localStorage.setItem('sig_last_signal_score',String(signalScore));}catch{}
   }
 
@@ -6417,16 +7256,19 @@ function renderCommandLayer(data){
   if(actionEl){
     const exhausted=data.filter(s=>s._narrativeExhaustion).length;
     const highConf=data.filter(s=>s._nms>=0.65&&s._confidence>=0.7).length;
+    const halfLifeH=Math.round(_getDecayHalfLifeMs()/3600000);
     let actions=[];
     if(reg==='Risk-Off'||reg==='Crash Override'){
       actions.push('Reduce beta exposure');
       actions.push('Increase cash / SGOV buffer');
+      actions.push(`Signal decay ${halfLifeH}h half-life — only fresh news counts`);
     } else if(reg==='Neutral'){
       actions.push('Hold positions — mixed signals');
       actions.push('Monitor regime for direction');
     } else {
       actions.push('Maintain momentum exposure');
       if(highConf>=3)actions.push('High-confidence signal — consider adding');
+      if(halfLifeH>12)actions.push(`Risk-On: ${halfLifeH}h decay — narrative carry extended`);
     }
     if(exhausted>=2)actions.push(`${exhausted} narratives exhausting — watch for reversals`);
     const m20Bull=m20Tickers.filter(t=>nmsMap[t]>=0.62).length;
@@ -6873,6 +7715,135 @@ function renderLabData(){
   const preds=labGet('predictions');
   const outcomes=labGet('outcomes');
   const captures=labGet('captures');
+
+  // ── STRUCTURED PREDICTION PANEL ──────────────────────────
+  const spStats=computeStructuredPredStats();
+  const spCountEl=document.getElementById('structPredCount');
+  const spStatsEl=document.getElementById('structuredPredStats');
+  const spPreds=KV.getJSON(KEYS.STRUCTURED_PREDS,[]);
+  if(spCountEl)spCountEl.textContent=`${spPreds.filter(p=>p.resolved).length} resolved · ${spPreds.filter(p=>!p.resolved).length} pending`;
+  if(spStatsEl){
+    if(spStats){
+      const signalColor=spStats.signalAcc>=60?'var(--green)':spStats.signalAcc>=50?'var(--amber)':'var(--red)';
+      const pmColor=spStats.pmAcc>=60?'var(--green)':spStats.pmAcc>=50?'var(--amber)':'var(--red)';
+      // Per-type accuracy AND Brier
+      const byTypeHtml=Object.entries(spStats.byType).filter(([,d])=>d.n>=2).map(([type,d])=>{
+        const acc=Math.round(d.signal/d.n*100);
+        const c=acc>=60?'var(--green)':acc>=50?'var(--amber)':'var(--red)';
+        const brierNote=d.brier!=null?` B:${d.brier}`:'';
+        return`<div style="display:flex;justify-content:space-between;font-size:8px;padding:.15rem 0;border-bottom:1px solid var(--b1);"><span style="color:var(--t2);">${type.replace(/_/g,' ')}</span><span style="font-family:var(--mono);color:${c};">${acc}% (${d.n})${brierNote}</span></div>`;
+      }).join('');
+      // Calibration curve SVG
+      const calibEntries=Object.values(spStats.calibBuckets).filter(b=>b.actual!=null).sort((a,b)=>a.predicted-b.predicted);
+      let calibSvg='';
+      if(calibEntries.length>=3){
+        const W=200,H=60;
+        const pts=calibEntries.map(b=>{const x=Math.round(b.predicted/100*(W-4)+2);const y=Math.round(H-(b.actual/100*(H-4)+2));return`${x},${y}`;}).join(' ');
+        // Perfect calibration diagonal
+        calibSvg=`<div style="background:var(--s3);border-radius:5px;padding:.4rem .5rem;margin-bottom:.5rem;">
+          <div style="font-size:8px;font-weight:700;color:var(--t3);letter-spacing:.06em;text-transform:uppercase;margin-bottom:.25rem;">Calibration Curve · SIGNAL Predictions</div>
+          <svg viewBox="0 0 ${W} ${H}" style="width:100%;height:${H}px;overflow:visible;">
+            <line x1="2" y1="${H-2}" x2="${W-2}" y2="2" stroke="rgba(255,255,255,.15)" stroke-width="1" stroke-dasharray="4,4"/>
+            <polyline points="${pts}" fill="none" stroke="var(--acc)" stroke-width="2" stroke-linejoin="round"/>
+            ${calibEntries.map(b=>{const x=Math.round(b.predicted/100*(W-4)+2);const y=Math.round(H-(b.actual/100*(H-4)+2));return`<circle cx="${x}" cy="${y}" r="3" fill="var(--acc)"/><text x="${x}" y="${y-5}" font-size="7" fill="rgba(255,255,255,.5)" text-anchor="middle" font-family="monospace">${b.predicted}%→${b.actual}%</text>`;}).join('')}
+          </svg>
+          <div style="font-size:7px;color:var(--t3);margin-top:2px;">Dashed = perfect calibration · Dots above line = underconfident · Below = overconfident</div>
+        </div>`;
+      }
+      // Lead-type breakdown
+      const leadBreakdown=spStats.leadCases>0?`<div style="font-size:8px;color:var(--t3);margin-bottom:.3rem;">Lead breakdown: ${spStats.signalLedN} signal-led · ${spStats.repricedN} PM-repriced${spStats.avgRepriceMag?` (avg ${spStats.avgRepriceMag}pp)`:''} · ${spStats.confEdgeN} confidence-edge</div>`:'';
+      // Prompt version table
+      const pvHtml=spStats.promptVersionStats.filter(v=>v.n>=3).map(v=>`<span style="font-size:8px;font-family:var(--mono);color:${v.acc>=60?'var(--green)':v.acc>=50?'var(--amber)':'var(--red)'};">v${v.version}: ${v.acc!=null?v.acc+'%':'pending'} (${v.n})</span>`).join(' · ');
+      spStatsEl.innerHTML=`
+        <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:6px;margin-bottom:.5rem;">
+          <div style="background:var(--s3);border-radius:5px;padding:.4rem .5rem;text-align:center;">
+            <div style="font-size:16px;font-weight:800;font-family:var(--mono);color:${signalColor};">${spStats.signalAcc}%</div>
+            <div style="font-size:7px;color:var(--t3);text-transform:uppercase;letter-spacing:.06em;">SIGNAL Acc</div>
+          </div>
+          <div style="background:var(--s3);border-radius:5px;padding:.4rem .5rem;text-align:center;">
+            <div style="font-size:16px;font-weight:800;font-family:var(--mono);color:${pmColor};">${spStats.pmAcc}%</div>
+            <div style="font-size:7px;color:var(--t3);text-transform:uppercase;letter-spacing:.06em;">PM Acc</div>
+          </div>
+          <div style="background:var(--s3);border-radius:5px;padding:.4rem .5rem;text-align:center;">
+            <div style="font-size:16px;font-weight:800;font-family:var(--mono);color:${spStats.divergentSignalAcc!=null?(spStats.divergentSignalAcc>=60?'var(--green)':'var(--amber)'):'var(--t3)'};">${spStats.divergentSignalAcc!=null?spStats.divergentSignalAcc+'%':'—'}</div>
+            <div style="font-size:7px;color:var(--t3);text-transform:uppercase;letter-spacing:.06em;">Diverge Acc</div>
+            <div style="font-size:7px;color:var(--t3);">${spStats.divergentN} cases</div>
+          </div>
+          <div style="background:var(--s3);border-radius:5px;padding:.4rem .5rem;text-align:center;">
+            <div style="font-size:16px;font-weight:800;font-family:var(--mono);color:${spStats.avgLeadDays!=null?'var(--acc)':'var(--t3)'};">${spStats.avgLeadDays!=null?spStats.avgLeadDays+'d':'—'}</div>
+            <div style="font-size:7px;color:var(--t3);text-transform:uppercase;letter-spacing:.06em;">Avg Lead</div>
+            <div style="font-size:7px;color:var(--t3);">${spStats.leadCases} cases</div>
+          </div>
+        </div>
+        ${calibSvg}
+        ${byTypeHtml?`<div style="background:var(--s3);border-radius:5px;padding:.4rem .5rem;margin-bottom:.5rem;"><div style="font-size:8px;font-weight:700;color:var(--t3);letter-spacing:.06em;text-transform:uppercase;margin-bottom:.3rem;">Accuracy & Brier by Event Type</div>${byTypeHtml}</div>`:''}
+        ${leadBreakdown}
+        ${pvHtml?`<div style="font-size:8px;color:var(--t3);margin-bottom:.3rem;">Prompt versions: ${pvHtml}</div>`:''}
+        <div style="font-size:8px;color:var(--t3);">Brier: ${spStats.brier} · ${spStats.n} resolved · Diverge = |SIGNAL − PM| > 10% · PM alpha boost ${(()=>{const aw=getAdaptiveWeights();return aw&&aw._pmAlphaBoost?'active':'pending 5+ resolved';})()}</div>
+      `;
+    }else{
+      spStatsEl.innerHTML='<div style="font-size:9px;color:var(--t3);padding:.3rem 0;">Resolve 5+ predictions to see accuracy vs Polymarket, lead-time, and calibration stats.</div>';
+    }
+  }
+  // Re-render pending structured preds
+  const pendingPreds=spPreds.filter(p=>!p.resolved).slice(-3);
+  if(pendingPreds.length)_renderStructuredPredPanel(pendingPreds);
+
+  // ── AUTO-CAPTURE PANEL ────────────────────────────────────
+  const autoCapEl=document.getElementById('autoCapBody');
+  const autoCapCount=document.getElementById('autoCapCount');
+  const autoCaps=KV.getJSON(KEYS.AUTO_CAPTURES,[]);
+  const autoOutcomes=KV.getJSON(KEYS.AUTO_CAPTURE_OUTCOMES,[]);
+  if(autoCapCount)autoCapCount.textContent=`${autoCaps.length} captures`;
+  if(autoCapEl&&autoCaps.length){
+    const ic14=computeAutoIC('r14d');
+    const ic7=computeAutoIC('r7d');
+    const ic3=computeAutoIC('r3d');
+    const hitRate=computeTradeHitRate('r7d');
+    const regimeIC=computeAutoICByRegime('r14d');
+    const icTrend=computeAutoICTrend('r14d',10);
+    const recent=autoCaps.slice(-5).reverse();
+    const icColor=ic14!=null?(ic14>=0.05?'var(--green)':ic14>=0?'var(--amber)':'var(--red)'):'var(--t3)';
+    const icLabel=ic14!=null?(ic14>=0.05?'Meaningful signal':ic14>=0?'Weak signal':'Anti-predictive'):'Accumulating\u2026';
+    // Horizon comparison: which timeframe has strongest IC?
+    const horizons=[{label:'3d',val:ic3},{label:'7d',val:ic7},{label:'14d',val:ic14}].filter(h=>h.val!=null);
+    const bestHorizon=horizons.length?horizons.reduce((a,b)=>Math.abs(b.val)>Math.abs(a.val)?b:a):null;
+    const horizonNote=bestHorizon?`Best horizon: ${bestHorizon.label} (IC ${bestHorizon.val}) — narrative leads price most at this timeframe`:'';
+    // IC trend sparkline
+    let sparkHtml='<div style="font-size:8px;color:var(--t3);">Need 10+ outcomes for trend</div>';
+    if(icTrend.length>=3){
+      const vals=icTrend.map(p=>p.ic);
+      const min=Math.min(...vals,-0.1);
+      const max=Math.max(...vals,0.1);
+      const range=max-min||0.2;
+      const W=220,H=40;
+      const pts=vals.map((v,i)=>{const x=Math.round(i/(vals.length-1)*(W-4)+2);const y=Math.round(H-((v-min)/range*(H-4)+2));return x+','+y;}).join(' ');
+      const zeroY=Math.round(H-((0-min)/range*(H-4)+2));
+      const lastIC=vals[vals.length-1];
+      const lineColor=lastIC>=0.05?'#00E676':lastIC>=0?'#FFB300':'#FF4545';
+      const lastX=Math.round((vals.length-1)/(vals.length-1)*(W-4)+2);
+      const lastY=Math.round(H-((lastIC-min)/range*(H-4)+2));
+      sparkHtml=`<svg viewBox="0 0 ${W} ${H}" style="width:100%;height:40px;overflow:visible;"><line x1="0" y1="${zeroY}" x2="${W}" y2="${zeroY}" stroke="rgba(255,255,255,.1)" stroke-width="1" stroke-dasharray="3,3"/><polyline points="${pts}" fill="none" stroke="${lineColor}" stroke-width="1.5" stroke-linejoin="round"/><circle cx="${lastX}" cy="${lastY}" r="3" fill="${lineColor}"/><text x="${W}" y="${H}" text-anchor="end" font-size="8" fill="${lineColor}" font-family="monospace">${lastIC}</text></svg>`;
+    }
+    // Regime IC rows
+    const regimeRows=Object.entries(regimeIC).map(([r,d])=>{const c=d.ic>=0.05?'var(--green)':d.ic>=0?'var(--amber)':'var(--red)';return`<div style="display:flex;justify-content:space-between;font-size:9px;padding:.2rem 0;border-bottom:1px solid var(--b1);"><span style="color:var(--t2);">${r}</span><span style="font-family:var(--mono);color:${c};font-weight:700;">${d.ic}</span><span style="color:var(--t3);">${d.n} obs</span></div>`;}).join('');
+    // Wilson CI hit rate
+    const hitRateHtml=hitRate?`<div style="font-size:18px;font-weight:800;font-family:var(--mono);color:${hitRate.rate>=55?'var(--green)':hitRate.rate>=45?'var(--amber)':'var(--red)'};">${hitRate.rate}%</div><div style="font-size:8px;color:var(--t3);font-weight:700;letter-spacing:.06em;text-transform:uppercase;margin-top:2px;">Trade Hit Rate \u00b7 7d</div><div style="font-size:8px;color:var(--t3);">${hitRate.hits}/${hitRate.n}${hitRate.reliable?'':' \u00b7 low n'}</div><div style="font-size:7px;color:var(--t3);margin-top:1px;">90% CI: ${hitRate.low}\u2013${hitRate.high}%</div>`:`<div style="font-size:14px;font-weight:800;font-family:var(--mono);color:var(--t3);">\u2014</div><div style="font-size:8px;color:var(--t3);font-weight:700;letter-spacing:.06em;text-transform:uppercase;margin-top:2px;">Trade Hit Rate</div><div style="font-size:8px;color:var(--t3);">Need 3+ outcomes</div>`;
+    autoCapEl.innerHTML=`
+      <div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:5px;margin-bottom:.75rem;">
+        <div style="background:var(--s3);border-radius:5px;padding:.5rem .5rem;text-align:center;"><div style="font-size:15px;font-weight:800;font-family:var(--mono);color:${ic3!=null?(ic3>=0.05?'var(--green)':ic3>=0?'var(--amber)':'var(--red)'):'var(--t3)'};">${ic3!=null?ic3:'—'}</div><div style="font-size:7px;color:var(--t3);font-weight:700;letter-spacing:.06em;text-transform:uppercase;margin-top:2px;">IC · 3d</div><div style="font-size:7px;color:var(--t3);">${autoOutcomes.filter(o=>o.r3d!=null).length}obs</div></div>
+        <div style="background:var(--s3);border-radius:5px;padding:.5rem .5rem;text-align:center;"><div style="font-size:15px;font-weight:800;font-family:var(--mono);color:${ic7!=null?(ic7>=0.05?'var(--green)':ic7>=0?'var(--amber)':'var(--red)'):'var(--t3)'};">${ic7!=null?ic7:'—'}</div><div style="font-size:7px;color:var(--t3);font-weight:700;letter-spacing:.06em;text-transform:uppercase;margin-top:2px;">IC · 7d</div><div style="font-size:7px;color:var(--t3);">${autoOutcomes.filter(o=>o.r7d!=null).length}obs</div></div>
+        <div style="background:var(--s3);border-radius:5px;padding:.5rem .5rem;text-align:center;border:1px solid ${bestHorizon&&bestHorizon.label==='14d'?'rgba(0,200,255,.3)':'var(--b1)'};"><div style="font-size:15px;font-weight:800;font-family:var(--mono);color:${icColor};">${ic14!=null?ic14:'—'}</div><div style="font-size:7px;color:var(--t3);font-weight:700;letter-spacing:.06em;text-transform:uppercase;margin-top:2px;">IC · 14d</div><div style="font-size:7px;color:${icColor};">${icLabel}</div></div>
+        <div style="background:var(--s3);border-radius:5px;padding:.5rem .5rem;text-align:center;">${hitRateHtml}</div>
+      </div>
+      ${horizonNote?`<div style="font-size:8px;color:var(--acc);margin-bottom:.4rem;padding:.3rem .5rem;background:rgba(0,200,255,.05);border-radius:4px;">◎ ${horizonNote}</div>`:''}
+      ${icTrend.length>0?`<div style="background:var(--s3);border-radius:5px;padding:.5rem .65rem;margin-bottom:.6rem;"><div style="font-size:8px;font-weight:700;color:var(--t3);letter-spacing:.06em;text-transform:uppercase;margin-bottom:.3rem;">IC Trend \u00b7 10-session rolling window</div>${sparkHtml}<div style="font-size:7px;color:var(--t3);margin-top:3px;">Zero line = no predictive power \u00b7 Above = signal improving \u00b7 Target: \u22650.05</div></div>`:''}
+      ${Object.keys(regimeIC).length>0?`<div style="background:var(--s3);border-radius:5px;padding:.5rem .65rem;margin-bottom:.6rem;"><div style="font-size:8px;font-weight:700;color:var(--t3);letter-spacing:.06em;text-transform:uppercase;margin-bottom:.3rem;">IC by Regime \u00b7 14d</div>${regimeRows}<div style="font-size:7px;color:var(--t3);margin-top:.3rem;">Shows whether NMS predicts better in specific market regimes</div></div>`:''}
+      <div style="font-size:9px;font-weight:700;color:var(--t3);letter-spacing:.06em;text-transform:uppercase;margin-bottom:.4rem;">Recent Auto-Captures</div>
+      ${recent.map(c=>{const scoreColor=c.signalScore>=60?'var(--green)':c.signalScore<=40?'var(--red)':'var(--amber)';const d=new Date(c.ts).toLocaleDateString('en-US',{month:'short',day:'numeric',hour:'numeric',minute:'2-digit'});return`<div style="display:flex;align-items:center;gap:.5rem;padding:.35rem .5rem;border-bottom:1px solid var(--b1);font-size:9px;"><span style="font-family:var(--mono);font-weight:700;color:${scoreColor};min-width:28px;">${c.signalScore}</span><span style="color:var(--t3);min-width:55px;">${c.topic}</span><span style="color:var(--t2);">${c.regime}</span><span style="color:var(--t3);margin-left:auto;">${d}</span>${c.tradeFired?.length?`<span style="color:var(--green);font-family:var(--mono);">\u2191${c.tradeFired.length}</span>`:''}${c.exhaustedTickers?.length?`<span style="color:var(--amber);">\u23f3${c.exhaustedTickers.length}</span>`:''}</div>`;}).join('')}
+      <div style="font-size:8px;color:var(--t3);margin-top:.5rem;">IC target: \u22650.05 \u00b7 Hit rate: \u226555% (90% CI) \u00b7 Fires on Finance, Markets, Top Stories, Technology</div>
+    `;
+  }
 
   // Accuracy stats
   const brierStats=computeBrierStats(preds);
@@ -7976,21 +8947,21 @@ async function renderSessionDiff(diff){
 // ── AUTO-RESOLVE POLYMARKET PREDICTIONS ───────────────────────
 async function autoResolvePredictions(){
   const preds=labGet('predictions').filter(p=>!p.resolved&&p.marketId);
-  if(!preds.length)return;
+  if(!preds.length&&!KV.getJSON(KEYS.STRUCTURED_PREDS,[]).filter(p=>!p.resolved&&p.pm_market_id).length)return;
   let resolved=0;
+
+  // ── RESOLVE STANDARD PREDICTIONS ─────────────────────────
   for(const pred of preds){
     try{
       const r=await fetch(`${PM_API}/market/${pred.marketId}`);
       if(!r.ok)continue;
       const m=await r.json();
       if(m.resolved===true||m.resolutionTime){
-        // Market resolved — read outcome
         const resolvedYes=m.outcome==='Yes'||m.winningOutcome==='Yes'||
           (m.resolutionData&&m.resolutionData.toLowerCase().includes('yes'));
-        const wasYesBet=pred.yesProb>=50; // we "bet" on the more likely outcome
+        const wasYesBet=pred.yesProb>=50;
         const correct=resolvedYes===wasYesBet;
         const actual=resolvedYes?'Resolved YES':'Resolved NO';
-        // Auto-score without user input
         const allPreds=labGet('predictions');
         const p=allPreds.find(x=>x.id===pred.id);
         if(p){
@@ -8001,7 +8972,6 @@ async function autoResolvePredictions(){
         resolved++;
         toast(`Auto-resolved: ${pred.question.slice(0,50)}… → ${actual}`,'success',3500);
       }
-      // Near-resolution alert: market closes within 48 hours
       if(!m.resolved&&m.endDate){
         const hoursLeft=(new Date(m.endDate)-Date.now())/3600000;
         if(hoursLeft>0&&hoursLeft<48){
@@ -8015,8 +8985,43 @@ async function autoResolvePredictions(){
         }
       }
     }catch(e){console.warn('Auto-resolve check failed:',pred.marketId,e.message);}
-    await new Promise(r=>setTimeout(r,300)); // throttle
+    await new Promise(r=>setTimeout(r,300));
   }
+
+  // ── AUTO-RESOLVE STRUCTURED PREDICTIONS ──────────────────
+  const spPreds=KV.getJSON(KEYS.STRUCTURED_PREDS,[]).filter(p=>!p.resolved&&p.pm_market_id);
+  for(const pred of spPreds){
+    try{
+      const r=await fetch(`${PM_API}/market/${pred.pm_market_id}`);
+      if(!r.ok)continue;
+      const m=await r.json();
+      const currentPmProb=pmProb(m);
+      if(m.resolved===true||m.resolutionTime){
+        const resolvedYes=m.outcome==='Yes'||m.winningOutcome==='Yes'||
+          (m.resolutionData&&m.resolutionData.toLowerCase().includes('yes'));
+        // Use resolveStructuredPred which handles lead-time and reprice detection
+        resolveStructuredPred(pred.id, resolvedYes, currentPmProb);
+        resolved++;
+        console.log(`[AutoResolve] Structured pred ${pred.id}: ${resolvedYes?'YES':'NO'}`);
+      } else if(m.endDate){
+        // Near-resolution alert
+        const hoursLeft=(new Date(m.endDate)-Date.now())/3600000;
+        if(hoursLeft>0&&hoursLeft<48){
+          const allSp=KV.getJSON(KEYS.STRUCTURED_PREDS,[]);
+          const sp=allSp.find(p=>p.id===pred.id);
+          if(sp&&!sp._alertedClose){
+            sp._alertedClose=true;
+            KV.setJSON(KEYS.STRUCTURED_PREDS,allSp);
+            const diff=pred.signal_prob-currentPmProb;
+            toast(`⏰ ${Math.round(hoursLeft)}h left · SIGNAL ${pred.signal_prob}% vs PM ${currentPmProb}%${Math.abs(diff)>=10?` · ${diff>0?'SIGNAL higher':'PM higher'}`:''}`,
+              'warning',6000);
+          }
+        }
+      }
+    }catch(e){console.warn('Structured auto-resolve failed:',pred.pm_market_id,e.message);}
+    await new Promise(r=>setTimeout(r,400));
+  }
+
   if(resolved>0)renderLabData();
 }
 
@@ -9828,6 +10833,10 @@ async function loadAll(force=false){
     setTimeout(loadAutoPredictions,700);
     setTimeout(renderEventHorizon,900);
     setTimeout(showMobileBriefIfReady,1100);
+    // AUTO-CAPTURE ENGINE — fires on trigger topics, silent background
+    setTimeout(()=>{ runAutoCapture(enrichedStories,{...nmsMap}); },1200);
+    // STRUCTURED PREDICTION LAYER — PM parallel, only when PM data loaded
+    setTimeout(()=>{ if(_cachedPM&&_cachedPM.length&&_AUTO_CAPTURE_TOPICS.has(currentTopic))generateStructuredPredictions().catch(()=>{}); },2500);
 
     // Tier 3 (1.5s-3s): Gemini calls that use _QS (synthesis queue — non-blocking)
     // NOTE: generateNarrativeSynthesis already fires from renderFeed() at 400ms.
@@ -9998,6 +11007,45 @@ function renderNmsVelocity(){
       +'<span style="color:var(--t3);">'+d.cur+'</span>'
       +'</div>';
   }).join('');
+}
+
+// Signal Score history sparkline — renders in Command Layer score block
+function _renderScoreSparkline(hist,current){
+  const el=document.getElementById('cmdScoreSparkline');
+  if(!el||hist.length<2)return;
+  const vals=hist.map(h=>h.score);
+  const W=60,H=18;
+  const mn=Math.min(...vals,0);
+  const mx=Math.max(...vals,100);
+  const rng=mx-mn||1;
+  const pts=vals.map((v,i)=>Math.round(i/(vals.length-1)*(W-2)+1)+','+Math.round(H-((v-mn)/rng)*(H-2)-1)).join(' ');
+  const trend=vals[vals.length-1]-(vals.length>=3?vals[vals.length-3]:vals[0]);
+  const lc=trend>5?'var(--green)':trend<-5?'var(--red)':'var(--t3)';
+  // Zero line at score=50
+  const zeroY=Math.round(H-((50-mn)/rng)*(H-2)-1);
+  el.innerHTML='<svg viewBox="0 0 '+W+' '+H+'" style="width:'+W+'px;height:'+H+'px;display:block;">'
+    +'<line x1="1" y1="'+zeroY+'" x2="'+(W-1)+'" y2="'+zeroY+'" stroke="rgba(255,255,255,.1)" stroke-width="1" stroke-dasharray="2,2"/>'
+    +'<polyline points="'+pts+'" fill="none" stroke="'+lc+'" stroke-width="1.5" stroke-linejoin="round"/>'
+    +'<circle cx="'+(W-1)+'" cy="'+Math.round(H-((current-mn)/rng)*(H-2)-1)+'" r="2" fill="'+lc+'"/>'
+    +'</svg>';
+  el.title='Signal Score last '+vals.length+' sessions: '+vals.join('→');
+}
+
+// NMS sparkline for M20 tracker — last 5 snapshots per ticker
+function _nmsSparkline(ticker){
+  try{
+    const snaps=JSON.parse(localStorage.getItem('sig_nms_snapshots_v1')||'[]');
+    const vals=snaps.slice(-5).map(s=>s.scores&&s.scores[ticker]!=null?Math.round(s.scores[ticker]*100):null).filter(v=>v!=null);
+    if(vals.length<2)return'';
+    const W=44,H=14;
+    const mn=Math.min(...vals);
+    const mx=Math.max(...vals,mn+1);
+    const rng=mx-mn;
+    const pts=vals.map((v,i)=>Math.round(i/(vals.length-1)*(W-2)+1)+','+Math.round(H-((v-mn)/rng)*(H-2)-1)).join(' ');
+    const trend=vals[vals.length-1]-vals[0];
+    const lc=trend>5?'var(--green)':trend<-5?'var(--red)':'var(--t3)';
+    return'<svg viewBox="0 0 '+W+' '+H+'" style="display:block;width:'+W+'px;height:'+H+'px;margin-top:1px;" title="NMS last '+vals.length+' sessions: '+vals.join('\u2192')+'"><polyline points="'+pts+'" fill="none" stroke="'+lc+'" stroke-width="1.5" stroke-linejoin="round"/></svg>';
+  }catch{return'';}
 }
 
 function saveNmsSnapshot(){
@@ -10548,6 +11596,20 @@ setTimeout(applyDensity,100);
       <!-- REBALANCING SIGNAL -->
       <div class="sub-hd mb-3">Rebalancing Signal</div>
       <div id="briefRebal" class="mb-6"><div class="empty">Load stories first.</div></div>
+
+      <!-- SESSION PRE-BRIEF -->
+      <div style="border-top:1px solid var(--b1);padding-top:1rem;margin-top:.5rem;margin-bottom:1rem;">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:.5rem;">
+          <div>
+            <div style="font-size:9px;font-weight:700;letter-spacing:.09em;text-transform:uppercase;color:var(--t3);">Session Pre-Brief · Thursday Ready</div>
+            <div style="font-size:9px;color:var(--t3);margin-top:1px;">Synthesizes regime, NMS, exit clocks, sector risk → 2-3 min session prep</div>
+          </div>
+          <button onclick="generateSessionPreBrief()" style="padding:.4rem .9rem;background:var(--acc);color:var(--bg);border:none;border-radius:5px;font-size:10px;font-weight:800;cursor:pointer;flex-shrink:0;">⚡ Generate Brief</button>
+        </div>
+        <div id="sessionPreBriefOutput" style="background:var(--s2);border:1px solid var(--b1);border-radius:6px;padding:.65rem .85rem;min-height:40px;">
+          <div style="font-size:9px;color:var(--t3);">Click Generate Brief — loads stories first for best results.</div>
+        </div>
+      </div>
 
       <!-- M20 NMS TRACKER (data entry) -->
       <div style="border-top:1px solid var(--b1);padding-top:1rem;margin-top:.5rem;">
