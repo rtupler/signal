@@ -1551,6 +1551,7 @@ button:focus-visible,a:focus-visible{outline:2px solid var(--acc);outline-offset
 <div class="dstatus" id="dstatusBar" role="status" aria-live="polite">
   <div class="ds-item"><div class="ds-dot" style="background:var(--t3);"></div><span class="t-t3">Initializing…</span></div>
 </div>
+<div id="regimeDriftWarning" style="display:none;padding:.3rem 1rem;background:rgba(255,179,0,.06);border-bottom:1px solid rgba(255,179,0,.2);font-size:9px;"></div>
 
 <!-- PILLAR TABS -->
 <div class="ptabs" role="tablist" aria-label="Main navigation">
@@ -2018,6 +2019,7 @@ button:focus-visible,a:focus-visible{outline:2px solid var(--acc);outline-offset
         <button class="res-stab on" data-rtab="sweep" onclick="switchResTab('sweep',this)">🌐 World Sweep</button>
         <button class="res-stab" data-rtab="bias" onclick="switchResTab('bias',this)">◎ Bias</button>
         <button class="res-stab" data-rtab="alpha" onclick="switchResTab('alpha',this)">◉ Alpha</button>
+        <button class="res-stab" data-rtab="ghost" onclick="switchResTab('ghost',this)">👻 Ghost</button>
         <button class="res-stab" data-rtab="ask" onclick="switchResTab('ask',this)">✦ Ask</button>
         <button class="res-stab" data-rtab="saved" onclick="switchResTab('saved',this)">◇ Saved</button>
       </div>
@@ -2027,6 +2029,11 @@ button:focus-visible,a:focus-visible{outline:2px solid var(--acc);outline-offset
       </div>
       <div id="resTabBias" class="res-panel panel-hidden"><div class="empty">Load stories first.</div></div>
       <div id="resTabAlpha" class="res-panel panel-hidden"><div class="empty">Load stories first.</div></div>
+      <div id="resTabGhost" class="res-panel panel-hidden" style="padding:1.25rem;overflow-y:auto;">
+        <div style="font-size:9px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--t3);margin-bottom:.5rem;">Ghost Ticker Correlation · Leading Indicators</div>
+        <div style="font-size:9px;color:var(--t3);margin-bottom:.75rem;line-height:1.5;">Monitors competitors and suppliers not in your M20 portfolio whose narrative spikes act as leading indicators for your holdings. When ASML moves, KLAC/LRCX often follow. Load stories and refresh to detect.</div>
+        <div id="ghostTickerPanel"><div class="empty">Load stories first — ghost ticker detection runs automatically after Refresh.</div></div>
+      </div>
       <div id="resTabAsk" class="res-panel panel-hidden"><div class="empty">Load stories first.</div></div>
       <div id="resTabSaved" class="res-panel panel-hidden"><div class="empty">No saved stories.</div></div>
     </div>
@@ -3273,6 +3280,86 @@ function _synthKey(t){return 'sig_synth_'+(t||currentTopic).replace(/[^a-z0-9]/g
 
 const WIRE_SERVICES=new Set(['reuters','ap','associated press','bloomberg','afp','pa media','dpa','xinhua']);
 
+// ═══════════════════════════════════════════════════════════
+// NARRATIVE ENTROPY SCORE
+// Measures whether a narrative is organically diversifying
+// (genuine market shift) vs echo-chamber amplification (PR pump).
+// High entropy = many source types, organic spread = real signal
+// Low entropy = few source types, coordinated amplification = noise
+// ═══════════════════════════════════════════════════════════
+
+// Source type taxonomy for entropy computation
+function _getSourceType(source){
+  const s=(source||'').toLowerCase();
+  if([...WIRE_SERVICES].some(w=>s.includes(w)))return'wire';
+  if(s.includes('wsj')||s.includes('ft')||s.includes('bloomberg')||s.includes('nytimes')||s.includes('economist'))return'tier1';
+  if(s.includes('cnbc')||s.includes('fox')||s.includes('cnn')||s.includes('abc')||s.includes('nbc')||s.includes('bbc'))return'broadcast';
+  if(s.includes('reddit')||s.includes('twitter')||s.includes('x.com')||s.includes('social'))return'social';
+  if(s.includes('blog')||s.includes('substack')||s.includes('medium')||s.includes('seeking'))return'opinion';
+  if(s.includes('sec')||s.includes('fed')||s.includes('gov')||s.includes('official'))return'official';
+  return'trade'; // trade press, industry publications
+}
+
+function computeNarrativeEntropy(storiesForEntity){
+  if(!storiesForEntity||storiesForEntity.length<2)return{entropy:0,label:'Insufficient data',organic:false};
+  // Count source types
+  const typeCounts={};
+  const uniqueSources=new Set();
+  storiesForEntity.forEach(s=>{
+    const t=_getSourceType(s.source);
+    typeCounts[t]=(typeCounts[t]||0)+1;
+    uniqueSources.add((s.source||'').toLowerCase().split(' ')[0]);
+  });
+  const n=storiesForEntity.length;
+  const types=Object.values(typeCounts);
+  // Shannon entropy: H = -sum(p * log2(p))
+  const H=types.reduce((acc,count)=>{
+    const p=count/n;
+    return acc - (p>0?p*Math.log2(p):0);
+  },0);
+  const maxH=Math.log2(Object.keys(typeCounts).length||1);
+  const normalizedH=maxH>0?Math.round(H/maxH*100):0; // 0-100
+  // Organic if: multiple source types, wire coverage present, unique sources > 3
+  const hasWire=!!(typeCounts['wire']||typeCounts['tier1']);
+  const sourceTypeDiversity=Object.keys(typeCounts).length;
+  const organic=hasWire&&sourceTypeDiversity>=3&&uniqueSources.size>=3;
+  const label=normalizedH>=70?'Organic spread':normalizedH>=40?'Mixed amplification':'Echo chamber';
+  return{
+    entropy:normalizedH,
+    label,
+    organic,
+    sourceTypes:typeCounts,
+    uniqueSources:uniqueSources.size,
+    hasWire,
+  };
+}
+
+// Compute entropy per story entity and attach to story
+function enrichWithNarrativeEntropy(stories){
+  // Group stories by primary entity
+  const entityGroups={};
+  stories.forEach(s=>{
+    (s.entities||[]).filter(e=>e.type==='ticker'||e.type==='person').forEach(e=>{
+      const key=(e.name||'').toUpperCase();
+      if(!entityGroups[key])entityGroups[key]=[];
+      entityGroups[key].push(s);
+    });
+  });
+  // Attach entropy to each story
+  stories.forEach(s=>{
+    const primaryEntity=(s.entities||[]).find(e=>e.type==='ticker'||e.type==='person');
+    if(primaryEntity){
+      const key=(primaryEntity.name||'').toUpperCase();
+      const group=entityGroups[key]||[s];
+      s._entropy=computeNarrativeEntropy(group);
+    } else {
+      // No entity — compute entropy across all stories in this session
+      s._entropy=computeNarrativeEntropy(stories);
+    }
+  });
+  return stories;
+}
+
 function detectAdversarialSignal(stories){
   const flags=[];
   // Group stories by entity overlap (simplified cluster)
@@ -3750,6 +3837,9 @@ function switchResTab(tab, btn){
       const dst=document.getElementById('resTabSaved');
       if(src&&dst)dst.innerHTML=src.innerHTML||'<div class="empty pad-lg">No saved stories.</div>';
     },200);
+  }
+  if(tab==='ghost'){
+    if(stories.length)renderGhostTickerPanel(stories);
   }
 }
 
@@ -4591,9 +4681,16 @@ function _getDecayHalfLifeMs(){
   if(reg==='Risk-On')return 16*3600000;
   return 12*3600000; // Neutral default
 }
-function narrativeDecayWeight(timeAgoStr){
+function narrativeDecayWeight(timeAgoStr, storyType=null){
   const ageMs=storyAgeMs(timeAgoStr);
-  const HALF_LIFE_MS=_getDecayHalfLifeMs();
+  let HALF_LIFE_MS=_getDecayHalfLifeMs();
+  // Story-type decay tracks — Breaking news is ephemeral, Analysis has carry
+  // Breaking/developing: tactical horizon, information prices in quickly
+  // Analysis/scheduled: structural horizon, insight persists longer
+  if(storyType==='breaking')HALF_LIFE_MS=Math.min(HALF_LIFE_MS,6*3600000); // max 6h for breaking
+  else if(storyType==='developing')HALF_LIFE_MS=Math.min(HALF_LIFE_MS,9*3600000); // max 9h
+  else if(storyType==='analysis')HALF_LIFE_MS=Math.max(HALF_LIFE_MS,18*3600000); // min 18h for analysis
+  else if(storyType==='scheduled')HALF_LIFE_MS=Math.max(HALF_LIFE_MS,20*3600000); // scheduled events have longest carry
   return Math.exp(-Math.LN2*(ageMs/HALF_LIFE_MS));
 }
 // Compute per-ticker delta: avg NMS of fresh stories (< 6h) vs all stories
@@ -5646,6 +5743,71 @@ function getEffectiveRegime(){
   return regime;
 }
 
+// ── REGIME DRIFT EARLY WARNING ────────────────────────────
+// Uses yield curve + VIX + sector NMS divergence to predict
+// regime transitions before manual change is needed.
+// Fires a toast and updates a warning element.
+function checkRegimeDrift(){
+  try{
+    const currentReg=getEffectiveRegime();
+    const warnings=[];
+    // Signal 1: Yield curve deepening inversion
+    if(_yieldCurve&&_yieldCurve.spread!=null){
+      if(_yieldCurve.spread<-0.3&&currentReg==='Risk-On'){
+        warnings.push({signal:'Yield curve inverted '+_yieldCurve.spread+'%',weight:2});
+      }
+      if(_yieldCurve.spread<-0.7){
+        warnings.push({signal:'Deep inversion '+_yieldCurve.spread+'% — recession signal',weight:3});
+      }
+    }
+    // Signal 2: VIX elevated
+    if(_vixValue!=null){
+      if(_vixValue>=20&&_vixValue<25&&currentReg==='Risk-On'){
+        warnings.push({signal:'VIX '+_vixValue+' — elevated fear',weight:1});
+      }
+      if(_vixValue>=25){
+        warnings.push({signal:'VIX '+_vixValue+' — Risk-Off territory',weight:3});
+      }
+    }
+    // Signal 3: Semis NMS falling while defensive sectors rising
+    if(nmsMap&&Object.keys(nmsMap).length>0){
+      const semiTickers=['AVGO','KLAC','LRCX','ANET','SNDK','LITE','COHR'];
+      const defensiveTickers=['LLY','VRTX','CRSP']; // biotech as defensive proxy
+      const semiNms=semiTickers.filter(t=>nmsMap[t]!=null).map(t=>nmsMap[t]);
+      const defNms=defensiveTickers.filter(t=>nmsMap[t]!=null).map(t=>nmsMap[t]);
+      if(semiNms.length>=3&&defNms.length>=2){
+        const avgSemi=semiNms.reduce((a,b)=>a+b,0)/semiNms.length;
+        const avgDef=defNms.reduce((a,b)=>a+b,0)/defNms.length;
+        if(avgDef>avgSemi+0.15&&currentReg==='Risk-On'){
+          warnings.push({signal:`Defensives NMS (${Math.round(avgDef*100)}) > Semis NMS (${Math.round(avgSemi*100)}) — rotation signal`,weight:2});
+        }
+      }
+    }
+    // Compute total warning weight
+    const totalWeight=warnings.reduce((a,w)=>a+w.weight,0);
+    const driftEl=document.getElementById('regimeDriftWarning');
+    if(driftEl){
+      if(totalWeight>=4&&currentReg==='Risk-On'){
+        const signals=warnings.map(w=>w.signal).join(' · ');
+        driftEl.style.display='block';
+        driftEl.innerHTML=`<span style="font-size:8px;font-weight:700;color:var(--amber);">⚡ Regime Drift Warning: ${signals} → Consider shifting to Neutral</span>`;
+        // Fire toast once per session
+        if(!_regimeDriftAlerted){
+          _regimeDriftAlerted=true;
+          toast(`Regime drift signals detected — consider shifting to Neutral · ${warnings[0].signal}`,'warning',7000);
+        }
+      } else if(totalWeight>=6){
+        driftEl.style.display='block';
+        driftEl.innerHTML=`<span style="font-size:8px;font-weight:700;color:var(--red);">⚠ Strong Risk-Off Signal: ${warnings.map(w=>w.signal).join(' · ')}</span>`;
+      } else {
+        driftEl.style.display='none';
+      }
+    }
+    return{warnings,totalWeight,suggestedRegime:totalWeight>=4?'Neutral':totalWeight>=6?'Risk-Off':currentReg};
+  }catch(e){console.warn('[RegimeDrift]',e.message);return null;}
+}
+let _regimeDriftAlerted=false;
+
 function renderVIXIndicator(){
   const el=document.getElementById('vixIndicator');
   if(!el)return;
@@ -6328,38 +6490,61 @@ async function generateStructuredPredictions(){
   if(!matches.length)return[];
 
   const calCtx=getCalibrationContext();
-  const topStories=stories.slice(0,4).map(s=>`"${s.headline}" NMS:${Math.round((s._nms||0.5)*100)}`).join('\n');
+  const topStories=stories.slice(0,4).map(s=>`"${s.headline}" NMS:${Math.round((s._nms||0.5)*100)} Type:${s.storyType||'?'} Entropy:${s._entropy?.entropy||'?'}%`).join('\n');
   const matchCtx=matches.slice(0,4).map(m=>`Market: "${(m.market.question||'').slice(0,70)}" PM:${m.pmProb}% NMS:${Math.round(m.avgNms*100)} Stories:${m.stories.length}`).join('\n');
 
+  // ── TETLOCK SUPERFORECASTER PROMPT ─────────────────────────
+  // Implements: decomposition, outside view, debiasing, fine-grained probs
   try{
     const raw=await geminiSynth(
-`You are a superforecaster generating structured probability estimates to be tracked against Polymarket.${calCtx}
+`You are a Tetlock-style superforecaster. Your predictions will be scored with Brier scoring and tracked against Polymarket odds. Calibration is everything.${calCtx}
 
-Current narrative intelligence:
+CURRENT NARRATIVE INTELLIGENCE:
 ${topStories}
 
-Matched Polymarket markets (with current crowd probability):
+MATCHED POLYMARKET MARKETS:
 ${matchCtx}
 
 Regime: ${typeof getEffectiveRegime==='function'?getEffectiveRegime():regime}
 NMI: ${_currentNMI?_currentNMI.nmi+'/100':'unknown'}
+Narrative decay half-life: ${Math.round(_getDecayHalfLifeMs()/3600000)}h (${typeof getEffectiveRegime==='function'?getEffectiveRegime():regime} regime)
 
-For each of the top 3 markets, generate a SIGNAL probability estimate based on narrative momentum.
-If narrative strongly supports YES: push above PM prob. If narrative diverges: push below.
-Be calibrated — use full range 20-85%, not just 50-70%.${calCtx?'\nApply the calibration correction above.':''}
+SUPERFORECASTER PROCESS — follow this for each market:
+
+STEP 1 — OUTSIDE VIEW: What is the base rate for this type of event? (e.g., "Fed cuts rates at consecutive meetings ~20% of the time historically")
+
+STEP 2 — DECOMPOSE: Break the question into 2-3 sub-questions with independent probability estimates:
+- Sub-question 1 + probability
+- Sub-question 2 + probability
+- Combined estimate
+
+STEP 3 — INSIDE VIEW: How does current narrative/NMS adjust from the base rate? Up or down and by how much?
+
+STEP 4 — DEBIASING CHECK: What would make this NOT happen? What am I missing? Is the narrative echo chamber (low entropy) or organic (high entropy)? Adjust 5-10% toward 50% if uncertain.
+
+STEP 5 — FINAL ESTIMATE: State probability to 1% precision (e.g., 67%, not 65-70%). Be willing to differ from PM odds if your analysis supports it.${calCtx?'\nApply calibration correction from your track record above.':''}
+
+RULES:
+- Use FULL range 15-88% — never cluster around 50%
+- Express to 1% precision — this is required
+- If you would say "around 60-65%", commit to exactly 62%
+- Your edge vs PM is in decomposition and outside view, not vibes
 
 Return ONLY valid JSON array:
 [{
-  "event":"string (the specific binary question, max 80 chars)",
-  "signal_prob":number(20-85, your NMS-derived probability YES resolves),
-  "pm_prob":number(current Polymarket % as shown above),
-  "pm_market_id":"string (copy exactly from market data)",
+  "event":"string (specific binary question, max 80 chars)",
+  "signal_prob":number(15-88, to 1% precision e.g. 67 not 65),
+  "pm_prob":number(current PM % as shown),
+  "pm_market_id":"string",
   "event_type":"monetary_policy|earnings|geopolitical|regulatory|macro_data|market_structure|other",
   "horizon_days":number(7 or 14),
-  "narrative_basis":"string (1 sentence: which stories drive this estimate)",
+  "outside_view":"string (base rate reference class, 1 sentence)",
+  "decomposition":"string (2-3 sub-questions and estimates, semicolon separated)",
+  "debiasing_note":"string (what could make this wrong, 1 sentence)",
+  "narrative_basis":"string (NMS + entropy context, 1 sentence)",
   "divergence_signal":boolean(true if |signal_prob - pm_prob| > 10)
 }]`,
-      'Return only valid JSON array.',_TOK.md,true
+      'Return only valid JSON array. No markdown.',_TOK.md,true
     );
 
     const parsed=JSON.parse(raw.replace(/```json?|```/g,'').trim());
@@ -6378,8 +6563,13 @@ Return ONLY valid JSON array:
       event_type:p.event_type||classifyEventType(p.event),
       horizon_days:p.horizon_days||14,
       narrative_basis:p.narrative_basis||'',
+      outside_view:p.outside_view||'',
+      decomposition:p.decomposition||'',
+      debiasing_note:p.debiasing_note||'',
       divergence_signal:!!(p.divergence_signal),
       prompt_version:getCurrentPromptVersion(),
+      // Update history — tracks how prob changes as new info arrives
+      update_history:[],
       // Resolution fields (filled later)
       resolved:false,
       outcome:null,
@@ -6406,6 +6596,63 @@ Return ONLY valid JSON array:
 }
 
 // Resolve a structured prediction
+// ── TETLOCK UPDATE MECHANISM ──────────────────────────────
+// When NMS changes significantly for a prediction's related market,
+// auto-update signal_prob and log the update with reason.
+// Tetlock: "keeping score on your updates" reveals whether you
+// update appropriately or under/overreact to new information.
+function updateStructuredPredictions(){
+  const preds=KV.getJSON(KEYS.STRUCTURED_PREDS,[]);
+  const pending=preds.filter(p=>!p.resolved);
+  if(!pending.length||!stories.length)return;
+  let updated=0;
+  pending.forEach(pred=>{
+    // Find current NMS for stories matching this prediction's event
+    const eventWords=(pred.event||'').toLowerCase().split(/\s+/).filter(w=>w.length>4);
+    const relatedStories=stories.filter(s=>{
+      const text=((s.headline||'')+' '+(s.summary||'')).toLowerCase();
+      return eventWords.filter(w=>text.includes(w)).length>=2;
+    });
+    if(!relatedStories.length)return;
+    const currentNms=Math.round(relatedStories.reduce((a,s)=>a+(s._nms||0.5),0)/relatedStories.length*100);
+    const prevNms=pred._lastNmsCheck||null;
+    pred._lastNmsCheck=currentNms;
+    if(prevNms===null){return;} // first check, no update yet
+    const nmsDelta=currentNms-prevNms;
+    // Only update if NMS moved significantly (≥8 points)
+    if(Math.abs(nmsDelta)<8)return;
+    // Compute new signal_prob: shift proportionally to NMS delta
+    // NMS moving 10 points = ~5% probability shift (dampened)
+    const probShift=Math.round(nmsDelta*0.5);
+    const oldProb=pred.signal_prob;
+    const newProb=Math.max(15,Math.min(88,oldProb+probShift));
+    if(newProb===oldProb)return;
+    // Log the update
+    const update={
+      ts:new Date().toISOString(),
+      old_prob:oldProb,
+      new_prob:newProb,
+      nms_delta:nmsDelta,
+      reason:`NMS ${nmsDelta>0?'↑':'↓'}${Math.abs(nmsDelta)}pts across ${relatedStories.length} related stories`,
+    };
+    if(!pred.update_history)pred.update_history=[];
+    pred.update_history.push(update);
+    pred.signal_prob=newProb;
+    // Recompute divergence signal
+    pred.divergence_signal=Math.abs(newProb-pred.pm_prob)>10;
+    updated++;
+    console.log(`[PredUpdate] ${pred.event?.slice(0,40)} · ${oldProb}%→${newProb}% (NMS ${nmsDelta>0?'+':''}${nmsDelta})`);
+  });
+  if(updated>0){
+    KV.setJSON(KEYS.STRUCTURED_PREDS,preds);
+    logEvent('pred_update',{count:updated});
+    // Re-render panel with updated probs
+    const pendingUpdated=preds.filter(p=>!p.resolved).slice(-3);
+    _renderStructuredPredPanel(pendingUpdated);
+    if(updated>=2)toast(`${updated} predictions updated — NMS shift detected`,'info',3000);
+  }
+}
+
 function resolveStructuredPred(id, outcome, pmProbNow){
   const preds=KV.getJSON(KEYS.STRUCTURED_PREDS,[]);
   const pred=preds.find(p=>p.id===id);
@@ -6559,16 +6806,21 @@ function _renderStructuredPredPanel(preds){
     const diff=p.signal_prob-p.pm_prob;
     const diffColor=Math.abs(diff)>=10?(diff>0?'var(--green)':'var(--red)'):'var(--t3)';
     const etLabel={monetary_policy:'💰 Monetary',earnings:'📊 Earnings',geopolitical:'🌐 Geopolitical',regulatory:'⚖️ Regulatory',macro_data:'📈 Macro',market_structure:'🏛️ Market',other:'◎ Other'}[p.event_type]||'◎ Other';
+    const updateCount=p.update_history?.length||0;
+    const lastUpdate=updateCount?p.update_history[updateCount-1]:null;
     return`<div style="background:var(--s3);border:1px solid ${p.divergence_signal?'rgba(0,200,255,.25)':'var(--b1)'};border-radius:6px;padding:.65rem .85rem;margin-bottom:6px;">
-      <div style="font-size:9px;color:var(--t3);margin-bottom:.3rem;">${etLabel} · ${p.horizon_days}d · ${new Date(p.timestamp).toLocaleDateString('en-US',{month:'short',day:'numeric'})}</div>
+      <div style="font-size:9px;color:var(--t3);margin-bottom:.3rem;">${etLabel} · ${p.horizon_days}d · ${new Date(p.timestamp).toLocaleDateString('en-US',{month:'short',day:'numeric'})}${updateCount?` · <span style="color:var(--acc);">↻ ${updateCount} update${updateCount>1?'s':''}</span>`:''}</div>
       <div style="font-size:11px;color:var(--t2);line-height:1.4;margin-bottom:.4rem;">${esc(p.event)}</div>
       <div style="display:flex;align-items:center;gap:.75rem;flex-wrap:wrap;">
-        <div style="text-align:center;"><div style="font-size:16px;font-weight:800;font-family:var(--mono);color:var(--acc);">${p.signal_prob}%</div><div style="font-size:7px;color:var(--t3);text-transform:uppercase;letter-spacing:.06em;">SIGNAL</div></div>
+        <div style="text-align:center;"><div style="font-size:16px;font-weight:800;font-family:var(--mono);color:var(--acc);">${p.signal_prob}%</div><div style="font-size:7px;color:var(--t3);text-transform:uppercase;letter-spacing:.06em;">SIGNAL</div>${lastUpdate?`<div style="font-size:7px;color:var(--acc);">${lastUpdate.old_prob}%→${lastUpdate.new_prob}%</div>`:''}</div>
         <div style="font-size:10px;color:${diffColor};font-weight:700;">${diff>0?'↑':'↓'} ${Math.abs(diff)}% vs PM</div>
         <div style="text-align:center;"><div style="font-size:16px;font-weight:800;font-family:var(--mono);color:var(--t3);">${p.pm_prob}%</div><div style="font-size:7px;color:var(--t3);text-transform:uppercase;letter-spacing:.06em;">POLYMARKET</div></div>
         ${p.divergence_signal?'<span style="font-size:8px;font-weight:700;color:var(--acc);border:1px solid rgba(0,200,255,.3);padding:1px 5px;border-radius:3px;">⚡ DIVERGE</span>':''}
       </div>
-      <div style="font-size:9px;color:var(--t3);margin-top:.35rem;">${esc(p.narrative_basis||'')}</div>
+      ${p.outside_view?`<div style="font-size:8px;color:var(--t3);margin-top:.3rem;border-top:1px solid var(--b1);padding-top:.3rem;"><span style="color:var(--amber);font-weight:700;">Outside view: </span>${esc(p.outside_view)}</div>`:''}
+      ${p.decomposition?`<div style="font-size:8px;color:var(--t3);margin-top:.2rem;"><span style="color:var(--acc);font-weight:700;">Decomposition: </span>${esc(p.decomposition)}</div>`:''}
+      ${p.debiasing_note?`<div style="font-size:8px;color:var(--t3);margin-top:.2rem;"><span style="color:var(--red);font-weight:700;">Debiasing: </span>${esc(p.debiasing_note)}</div>`:''}
+      ${p.narrative_basis?`<div style="font-size:8px;color:var(--t3);margin-top:.2rem;">${esc(p.narrative_basis)}</div>`:''}
       ${!p.resolved?`<div style="display:flex;gap:6px;margin-top:.5rem;">
         <button onclick="resolveStructuredPred('${p.id}',true,null)" style="font-size:9px;padding:2px 8px;background:rgba(0,230,118,.1);color:var(--green);border:1px solid rgba(0,230,118,.2);border-radius:3px;cursor:pointer;">✓ YES resolved</button>
         <button onclick="resolveStructuredPred('${p.id}',false,null)" style="font-size:9px;padding:2px 8px;background:rgba(255,69,69,.08);color:var(--red);border:1px solid rgba(255,69,69,.15);border-radius:3px;cursor:pointer;">✗ NO resolved</button>
@@ -6829,7 +7081,7 @@ function computeNMS(stories){
     // ── NARRATIVE VELOCITY DECAY ──────────────────────────────
     // Exponential time-decay: older stories lose weight (half-life 12h)
     // NMS now reflects what is happening NOW, not 2-day-old carry-over
-    const decayW=narrativeDecayWeight(s.timeAgo||'');
+    const decayW=narrativeDecayWeight(s.timeAgo||'',s.storyType||null);
     s._decayWeight=Math.round(decayW*100)/100;
     const nmsDecayed=Math.min(1,Math.max(0,Math.round(nmsAdjusted*decayW*100)/100));
     nmsMap[s.headline]=nmsDecayed;
@@ -7343,6 +7595,7 @@ function renderFeed(data){
         <div class="sc-r">
           ${s._adversarialFlag?`<span class="chip chip-bear" title="${esc(s._adversarialFlag)}">⚠ ${esc(s._adversarialFlag)}</span>`:''}
           ${s._narrativeExhaustion?`<span class="vel-badge vel-exhaustion" title="Narrative Exhaustion: strong historical signal but story is aging — momentum may be peaking. Decay weight: ${Math.round((s._decayWeight||0)*100)}%">⏳ Exhausted</span>`:''}
+          ${s._entropy&&!s._entropy.organic&&s._entropy.entropy<40&&(s._nms||0)>0.55?`<span class="vel-badge" style="background:rgba(179,136,255,.12);color:var(--purple,#a78bfa);border:1px solid rgba(179,136,255,.2);font-size:7px;" title="Echo Chamber: entropy ${s._entropy.entropy}% · ${s._entropy.uniqueSources} sources · ${s._entropy.label} — high NMS but low source diversity, may be PR-driven">📢 Echo</span>`:''}
           ${(s.alphaSignal&&s.alphaSignal!=='neutral')?`<span class="chip ${s.alphaSignal==='bullish'?'chip-bull':'chip-bear'}" style="font-size:10px;padding:3px 8px;font-weight:800;">${s.alphaSignal==='bullish'?'↑ BULL':'↓ BEAR'}</span>`:''}
           ${s._pmComposite?`<span class="chip chip-odds">◈ ${s._pmComposite}%</span>`:pmOdds?`<span class="chip chip-odds">◈ ${esc(pmOdds)}</span>`:''}
           <span class="nms-badge" style="font-family:var(--mono);font-size:15px;font-weight:800;color:${nmsColor(nms)};min-width:30px;text-align:right;line-height:1;">${Math.round(nms*100)}</span>
@@ -7780,6 +8033,21 @@ function renderLabData(){
         ${leadBreakdown}
         ${pvHtml?`<div style="font-size:8px;color:var(--t3);margin-bottom:.3rem;">Prompt versions: ${pvHtml}</div>`:''}
         <div style="font-size:8px;color:var(--t3);">Brier: ${spStats.brier} · ${spStats.n} resolved · Diverge = |SIGNAL − PM| > 10% · PM alpha boost ${(()=>{const aw=getAdaptiveWeights();return aw&&aw._pmAlphaBoost?'active':'pending 5+ resolved';})()}</div>
+        ${spStats.n>=5?`<div style="margin-top:.4rem;background:var(--s3);border-radius:5px;padding:.4rem .6rem;">
+          <div style="font-size:8px;font-weight:700;color:var(--t3);letter-spacing:.06em;text-transform:uppercase;margin-bottom:.25rem;">Tetlock Superforecaster Benchmark</div>
+          <div style="display:flex;gap:1rem;flex-wrap:wrap;">
+            <div style="text-align:center;"><div style="font-size:13px;font-weight:800;font-family:var(--mono);color:${spStats.brier<=0.14?'var(--green)':spStats.brier<=0.20?'var(--amber)':'var(--red)'};">${spStats.brier}</div><div style="font-size:7px;color:var(--t3);">SIGNAL Brier</div></div>
+            <div style="text-align:center;"><div style="font-size:13px;font-weight:800;font-family:var(--mono);color:var(--green);">0.14</div><div style="font-size:7px;color:var(--t3);">Superforecaster</div></div>
+            <div style="text-align:center;"><div style="font-size:13px;font-weight:800;font-family:var(--mono);color:var(--amber);">0.22</div><div style="font-size:7px;color:var(--t3);">Average Expert</div></div>
+            <div style="text-align:center;"><div style="font-size:13px;font-weight:800;font-family:var(--mono);color:var(--t3);">0.28</div><div style="font-size:7px;color:var(--t3);">Chance</div></div>
+          </div>
+          <div style="font-size:7px;color:var(--t3);margin-top:.3rem;">${spStats.brier<=0.14?'✓ Superforecaster tier':'Brier < 0.14 = superforecaster · < 0.20 = skilled · < 0.25 = average · Lower is better'}</div>
+          ${(()=>{
+            const updates=KV.getJSON(KEYS.STRUCTURED_PREDS,[]).filter(p=>p.update_history&&p.update_history.length>0);
+            const totalUpdates=updates.reduce((a,p)=>a+p.update_history.length,0);
+            return totalUpdates>0?`<div style="font-size:7px;color:var(--acc);margin-top:.2rem;">↻ ${totalUpdates} probability updates logged — Tetlock update tracking active</div>`:'';
+          })()}
+        </div>`:''}
       `;
     }else{
       spStatsEl.innerHTML='<div style="font-size:9px;color:var(--t3);padding:.3rem 0;">Resolve 5+ predictions to see accuracy vs Polymarket, lead-time, and calibration stats.</div>';
@@ -9025,6 +9293,118 @@ async function autoResolvePredictions(){
   if(resolved>0)renderLabData();
 }
 
+// ═══════════════════════════════════════════════════════════
+// GHOST TICKER CORRELATION
+// Monitors competitors/suppliers not in M20 whose narrative
+// shifts act as leading indicators for held positions.
+// When a ghost ticker spikes, force-scans for implications
+// on correlated M20 holdings before their NMS moves.
+// ═══════════════════════════════════════════════════════════
+
+// Ghost ticker map: {ghost: [m20 tickers it leads]}
+const GHOST_TICKER_MAP={
+  // Semiconductor equipment — leads KLAC, LRCX
+  'ASML':['KLAC','LRCX','AVGO'],'AMAT':['KLAC','LRCX'],
+  // Semiconductor design/fab — leads broader semis
+  'NVDA':['AVGO','ANET','VRT','GEV'],'AMD':['AVGO','KLAC'],
+  'TSM':['AVGO','KLAC','LRCX','ANET'],'MU':['SNDK','KLAC'],
+  // Software/cloud — leads PANW, FSLY
+  'MSFT':['PANW','FSLY'],'AMZN':['FSLY','PANW'],
+  'GOOGL':['PANW','FSLY','ANET'],
+  // Industrial/energy — leads ETN, CAT, PH, GE, BE
+  'DE':['CAT','PH'],'HON':['ETN','GE','PH'],
+  'NEE':['BE','ETN'],'ENPH':['BE'],
+  // Biotech — leads CRSP, LLY, VRTX
+  'MRNA':['CRSP','VRTX'],'REGN':['LLY','VRTX'],
+  'BMY':['LLY','VRTX','CRSP'],
+  // Finance — leads IBKR
+  'GS':['IBKR'],'MS':['IBKR'],'SCHW':['IBKR'],
+};
+
+// Keyword map for ghost ticker story detection
+const GHOST_KEYWORDS={
+  'ASML':['asml','extreme ultraviolet','euv','lithography'],
+  'NVDA':['nvidia','cuda','gpu','h100','blackwell'],
+  'AMD':['amd','advanced micro','epyc','radeon'],
+  'TSM':['tsmc','taiwan semiconductor','3nm','2nm'],
+  'MU':['micron','dram','nand','memory chip'],
+  'MSFT':['microsoft','azure','copilot','openai'],
+  'AMZN':['amazon','aws','cloud revenue'],
+  'GOOGL':['google','alphabet','gcp','gemini'],
+  'DE':['deere','john deere','agricultural'],
+  'HON':['honeywell','aerospace','building'],
+  'NEE':['nextera','florida power','renewable'],
+  'ENPH':['enphase','microinverter','solar'],
+  'MRNA':['moderna','mrna','vaccine platform'],
+  'REGN':['regeneron','eylea','dupixent'],
+  'BMY':['bristol myers','revlimid','opdivo'],
+  'GS':['goldman sachs','investment banking'],
+  'MS':['morgan stanley','wealth management'],
+  'SCHW':['charles schwab','brokerage','retail investor'],
+};
+
+function detectGhostTickerSpikes(stories){
+  if(!stories||!stories.length)return[];
+  const spikes=[];
+  Object.entries(GHOST_KEYWORDS).forEach(([ghost,keywords])=>{
+    const ghostStories=stories.filter(s=>{
+      const text=((s.headline||'')+' '+(s.summary||'')).toLowerCase();
+      return keywords.some(k=>text.includes(k));
+    });
+    if(!ghostStories.length)return;
+    const avgNms=ghostStories.reduce((a,s)=>a+(s._nms||0.5),0)/ghostStories.length;
+    if(avgNms>=0.62){ // only spike if NMS is meaningful
+      const affected=GHOST_TICKER_MAP[ghost]||[];
+      const affectedInM20=affected.filter(t=>m20Tickers.includes(t));
+      if(affectedInM20.length){
+        spikes.push({
+          ghost,
+          ghostNms:Math.round(avgNms*100),
+          storyCount:ghostStories.length,
+          affected:affectedInM20,
+          topHeadline:ghostStories[0].headline,
+          alphaSignal:ghostStories[0].alphaSignal||'neutral',
+        });
+      }
+    }
+  });
+  return spikes.sort((a,b)=>b.ghostNms-a.ghostNms);
+}
+
+function renderGhostTickerPanel(stories){
+  const el=document.getElementById('ghostTickerPanel');
+  if(!el)return;
+  const spikes=detectGhostTickerSpikes(stories);
+  if(!spikes.length){
+    el.innerHTML='<div class="empty txt-10">No ghost ticker spikes detected. Monitors ASML, NVDA, TSM, MU and others for leading signals on your M20 semis/biotech/industrial holdings.</div>';
+    return;
+  }
+  el.innerHTML=spikes.map(sp=>{
+    const dirColor=sp.alphaSignal==='bullish'?'var(--green)':sp.alphaSignal==='bearish'?'var(--red)':'var(--t2)';
+    const dir=sp.alphaSignal==='bullish'?'↑ Bullish':sp.alphaSignal==='bearish'?'↓ Bearish':'→ Neutral';
+    return`<div style="background:var(--s2);border:1px solid rgba(0,200,255,.2);border-radius:6px;padding:.6rem .85rem;margin-bottom:5px;">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:.3rem;">
+        <span style="font-family:var(--mono);font-weight:800;color:var(--acc);font-size:12px;">$${sp.ghost}</span>
+        <span style="font-size:9px;font-family:var(--mono);font-weight:700;color:${dirColor};">${dir} · NMS ${sp.ghostNms}</span>
+      </div>
+      <div style="font-size:9px;color:var(--t2);margin-bottom:.3rem;">${esc(sp.topHeadline?.slice(0,70))}${sp.topHeadline?.length>70?'…':''}</div>
+      <div style="font-size:8px;color:var(--t3);">⟶ Leading indicator for: ${sp.affected.map(t=>`<span style="font-family:var(--mono);color:var(--acc);">$${t}</span>`).join(' ')}</div>
+      <div style="font-size:7px;color:var(--amber);margin-top:2px;">Ghost signal — check ${sp.affected.join('/')} NMS before it moves</div>
+    </div>`;
+  }).join('');
+  // Surface ghost spikes in Command Layer top risks if significant
+  const topSpike=spikes[0];
+  if(topSpike&&topSpike.ghostNms>=70){
+    const risksEl=document.getElementById('cmdRisksList');
+    if(risksEl&&!risksEl.innerHTML.includes('Ghost:')){
+      const ghostDiv=document.createElement('div');
+      ghostDiv.className='cmd-item';
+      ghostDiv.innerHTML=`<span class="cmd-item-num" style="color:var(--acc);">⟶</span><span>Ghost: $${topSpike.ghost} NMS ${topSpike.ghostNms} → watch ${topSpike.affected.slice(0,2).join('/')}</span>`;
+      risksEl.appendChild(ghostDiv);
+    }
+  }
+}
+
 async function fetchM20RelatedMarkets(){
   // Fetch markets related to M20 tickers and macro themes
   const keywords=[...m20Tickers,...extTickers,'Fed','rate','inflation','earnings','GDP','recession','AI','semiconductor','tariff'];
@@ -10229,12 +10609,65 @@ function checkThresholdAlerts(){
         alerts.push({icon:'◉',text:`$${t} NMS ${cn>pn?'↑':'↓'}${Math.round(Math.abs(cn-pn)*100)}pts (${Math.round(pn*100)}→${Math.round(cn*100)})`});
     });
   }
-  if(!alerts.length)return;
+
+  // ── CONVICTION CONFLICT ALERT ────────────────────────────
+  // Fires when NMS is bullish but options/analyst data contradicts
+  // Prevents buying into strong narrative that smart money is fading
+  if(nmsMap&&Object.keys(nmsMap).length){
+    m20Tickers.forEach(t=>{
+      const nms=nmsMap[t];
+      if(nms==null)return;
+      const nmsScore=Math.round(nms*100);
+      const iv=_ivData&&_ivData[t];
+      const analyst=_analystData&&_analystData[t];
+      const conflicts=[];
+      // Conflict 1: High NMS but IV narrowing (options not pricing narrative)
+      if(nmsScore>=70&&iv&&iv.impliedMove!=null){
+        // Compare IV to historical: if IV < 3% implied move, options are calm
+        if(iv.impliedMove<3&&!iv.flagged){
+          conflicts.push(`IV ${iv.impliedMove}% — options not pricing bullish narrative`);
+        }
+      }
+      // Conflict 2: High NMS but analyst revisions negative
+      if(nmsScore>=65&&analyst&&analyst.drift!=null){
+        if(analyst.drift<-3){ // price target cut >3%
+          conflicts.push(`Analyst target cut ${Math.round(analyst.drift)}% — smart money fading`);
+        }
+      }
+      // Conflict 3: High NMS but PM odds declining for related event
+      if(nmsScore>=68){
+        const relatedPM=_cachedPM.filter(m=>{
+          const q=(m.question||'').toLowerCase();
+          return q.includes(t.toLowerCase())||GHOST_KEYWORDS[t]?.some(k=>q.includes(k));
+        });
+        relatedPM.forEach(m=>{
+          const prob=pmProb(m);
+          const hist=getPMHistory?.(m.id)||[];
+          if(hist.length>=2){
+            const delta=prob-hist[hist.length-2]?.p;
+            if(delta<-8)conflicts.push(`PM odds ↓${Math.abs(Math.round(delta))}pp — crowd fading narrative`);
+          }
+        });
+      }
+      if(conflicts.length){
+        alerts.push({
+          icon:'⚡',
+          text:`$${t} NMS ${nmsScore} CONFLICT: ${conflicts[0]}`,
+          isConflict:true,
+        });
+      }
+    });
+  }
   const el=document.getElementById('feedCol');if(!el)return;
+  if(!alerts.length)return;
   // Remove existing alert banner to prevent stacking on every loadAll
   el.querySelector('.alert-banner')?.remove();
   const b=document.createElement('div');b.className='alert-banner';
-  b.innerHTML=`<div class="alert-hd">⚠ ${alerts.length} Alert${alerts.length>1?'s':''} Since Last Session</div>${alerts.slice(0,5).map(a=>`<div class="alert-item"><span style="color:var(--amber);">${a.icon}</span><span>${esc(a.text)}</span></div>`).join('')}`;
+  const conflictAlerts=alerts.filter(a=>a.isConflict);
+  const normalAlerts=alerts.filter(a=>!a.isConflict);
+  b.innerHTML=`<div class="alert-hd">⚠ ${alerts.length} Alert${alerts.length>1?'s':''} Since Last Session${conflictAlerts.length?` · ${conflictAlerts.length} Conviction Conflict${conflictAlerts.length>1?'s':''}`:''}</div>`
+    +conflictAlerts.slice(0,3).map(a=>`<div class="alert-item"><span style="color:var(--red);font-weight:700;">${a.icon}</span><span style="color:var(--t2);">${esc(a.text)}</span></div>`).join('')
+    +normalAlerts.slice(0,3).map(a=>`<div class="alert-item"><span style="color:var(--amber);">${a.icon}</span><span>${esc(a.text)}</span></div>`).join('');
   el.insertBefore(b,el.firstChild);
 }
 
@@ -10790,6 +11223,9 @@ async function loadAll(force=false){
     try{
       enrichedStories=enrichWithCredibility(enrichedStories);
     }catch(e){console.warn('[SIGNAL] enrichWithCredibility failed:',e.message);}
+    try{
+      enrichedStories=enrichWithNarrativeEntropy(enrichedStories);
+    }catch(e){console.warn('[SIGNAL] enrichWithNarrativeEntropy failed:',e.message);}
     dataStatus.sentiment=_sentLib!=null;updateDataStatus();
 
     try{
@@ -10835,6 +11271,12 @@ async function loadAll(force=false){
     setTimeout(showMobileBriefIfReady,1100);
     // AUTO-CAPTURE ENGINE — fires on trigger topics, silent background
     setTimeout(()=>{ runAutoCapture(enrichedStories,{...nmsMap}); },1200);
+    // REGIME DRIFT EARLY WARNING
+    setTimeout(()=>{ checkRegimeDrift(); },1500);
+    // GHOST TICKER DETECTION — renders into Research > Ghost tab
+    setTimeout(()=>{ renderGhostTickerPanel(enrichedStories); },1800);
+    // TETLOCK PREDICTION UPDATES — refresh signal_prob on NMS changes
+    setTimeout(()=>{ updateStructuredPredictions(); },2200);
     // STRUCTURED PREDICTION LAYER — PM parallel, only when PM data loaded
     setTimeout(()=>{ if(_cachedPM&&_cachedPM.length&&_AUTO_CAPTURE_TOPICS.has(currentTopic))generateStructuredPredictions().catch(()=>{}); },2500);
 
