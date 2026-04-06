@@ -5211,22 +5211,23 @@ async function fetchPolymarkets(limit=50){
   try{
     const cached=cGet('polymarket',CACHE.polymarket);
     if(cached)return cached;
-    // Manifold Markets API — CORS enabled, no auth, real prediction markets
-    const r=await fetch(`https://api.manifold.markets/v0/markets?limit=${Math.min(limit,100)}&sort=liquidity&order=desc`);
-    if(!r.ok)throw new Error('Manifold '+r.status);
+    // Polymarket Gamma API — open CORS, no auth required
+    const r=await fetch(`${PM_API}/markets?limit=${Math.min(limit,100)}&active=true&closed=false&order=volume&ascending=false`);
+    if(!r.ok)throw new Error('Polymarket '+r.status);
     const raw=await r.json();
-    // Normalize to SIGNAL's internal format
-    const data=raw
-      .filter(m=>!m.isResolved&&m.outcomeType==='BINARY'&&m.probability!=null)
+    const markets=Array.isArray(raw)?raw:(raw.markets||[]);
+    const data=markets
+      .filter(m=>m.active!==false&&m.closed!==true&&m.outcomePrices!=null)
       .slice(0,limit)
       .map(m=>({
-        id: m.id,
-        question: m.question,
-        outcomePrices: JSON.stringify([(m.probability).toFixed(2),(1-m.probability).toFixed(2)]),
-        volume: m.volume||0,
-        category: m.groupSlugs?.[0]?.replace(/-/g,' ')||'General',
-        endDate: m.closeTime?new Date(m.closeTime).toISOString():null,
-        url: m.url||'https://manifold.markets',
+        id: m.id||m.conditionId,
+        question: m.question||m.title||'',
+        outcomePrices: typeof m.outcomePrices==='string'?m.outcomePrices:JSON.stringify(m.outcomePrices||['0.5','0.5']),
+        volume: m.volume||m.volumeNum||0,
+        category: m.category||'General',
+        endDate: m.endDateIso||m.endDate||null,
+        url: `https://polymarket.com/event/${m.slug||m.id}`,
+        resolved: m.resolved||false,
       }));
     if(data.length){
       cSet('polymarket',data);
@@ -9937,24 +9938,29 @@ async function fetchM20RelatedMarkets(){
 
 // ── KALSHI API — FREE PUBLIC MARKET DATA ─────────────────────
 const KALSHI_API='https://api.elections.kalshi.com/trade-api/v2';
-let _kalshiCache={}; // marketId -> {prob, ts}
+let _kalshiCache={};
+
+// Financial/macro keywords for Kalshi relevance filtering
+const KALSHI_MACRO_KW=['fed','federal reserve','rate','inflation','gdp','recession','cpi','unemployment','fomc','powell','treasury','yield','deficit','tariff','trade','oil','energy','market','s&p','nasdaq','dow','bitcoin','crypto','election','congress','senate','house','president','policy','regulation','ai','tech','earnings'];
+// Sports/entertainment to explicitly exclude
+const KALSHI_EXCLUDE=['nba','nfl','mlb','nhl','football','basketball','baseball','hockey','soccer','tennis','golf','oscar','grammy','emmy','super bowl','world series','champion','playoff','draft','player','game','score','team','season','match'];
 
 async function fetchKalshiMarkets(keywords=[]){
   if(window.location.protocol==='file:')return[];
   try{
-    // Kalshi public endpoint — no auth required for reads
-    const params=new URLSearchParams({limit:'100',status:'open'});
+    const params=new URLSearchParams({limit:'200',status:'open'});
     const r=await proxyFetch(`${KALSHI_API}/markets?${params}`,{
       headers:{'Content-Type':'application/json'}
     });
     if(!r.ok)return[];
     const d=await r.json();
     const markets=d.markets||[];
-    // Filter by keyword relevance
-    const kw=[...keywords,...m20Tickers,...extTickers,'Fed','rate','inflation','GDP','recession','AI']
-      .map(k=>k.toLowerCase());
+    // Filter: must match macro keywords AND not match sports/entertainment
+    const kw=[...KALSHI_MACRO_KW,...keywords,...(typeof m20Tickers!=='undefined'?m20Tickers:[])].map(k=>k.toLowerCase());
     const scored=markets.map(m=>{
       const title=((m.title||'')+(m.subtitle||'')).toLowerCase();
+      // Exclude sports/entertainment
+      if(KALSHI_EXCLUDE.some(ex=>title.includes(ex)))return{...m,_relevance:-1};
       const hits=kw.filter(k=>k.length>2&&title.includes(k)).length;
       return{...m,_relevance:hits};
     }).filter(m=>m._relevance>0).sort((a,b)=>b._relevance-a._relevance);
