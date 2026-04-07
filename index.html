@@ -1630,7 +1630,7 @@ button:focus-visible,a:focus-visible{outline:2px solid var(--acc);outline-offset
       <div class="set-note">Tracked separately alongside M20 in the Factor Lab.</div>
       <div class="set-lbl">Cloudflare Proxy URL <span class="t-t3">(required for Yahoo Finance, Kalshi, Options IV)</span></div>
       <input class="set-inp" id="proxySettInp" placeholder="https://signal-proxy.rtupler.workers.dev">
-      <div class="set-note">Enter your Cloudflare Worker proxy URL. Format: https://signal-proxy.YOUR-ID.workers.dev</div>
+      <div class="set-note" id="proxyNote">Enter your Cloudflare Worker proxy URL. Format: https://signal-proxy.YOUR-ID.workers.dev</div>
       <div class="set-lbl">NewsAPI Key <span class="t-t3">(optional — newsapi.org free, 100 req/day)</span></div>
       <input class="set-inp" id="newsapiInp" placeholder="your_newsapi_key">
       <div class="set-note">Enables real article summaries instead of Gemini-invented summaries. Get free key at newsapi.org.</div>
@@ -5216,9 +5216,10 @@ async function fetchPolymarkets(limit=50){
   try{
     const cached=cGet('polymarket',CACHE.polymarket);
     if(cached)return cached;
-    // Polymarket Gamma API — open CORS, no auth required
-    const r=await fetch(`${PM_API}/markets?limit=${Math.min(limit,100)}&active=true&closed=false&order=volume&ascending=false`);
-    if(!r.ok)throw new Error('Polymarket '+r.status);
+    // Polymarket Gamma API — route through proxy to avoid CORS
+    const _pmUrl=`${PM_API}/markets?limit=${Math.min(limit,100)}&active=true&closed=false&order=volume&ascending=false`;
+    const r=await proxyFetch(_pmUrl);
+    if(!r||!r.ok)throw new Error('Polymarket '+(r?r.status:'no response'));
     const raw=await r.json();
     const markets=Array.isArray(raw)?raw:(raw.markets||[]);
     const data=markets
@@ -9948,7 +9949,7 @@ let _kalshiCache={};
 // Financial/macro keywords for Kalshi relevance filtering
 const KALSHI_MACRO_KW=['fed','federal reserve','rate','inflation','gdp','recession','cpi','unemployment','fomc','powell','treasury','yield','deficit','tariff','trade','oil','energy','market','s&p','nasdaq','dow','bitcoin','crypto','election','congress','senate','house','president','policy','regulation','ai','tech','earnings'];
 // Sports/entertainment to explicitly exclude
-const KALSHI_EXCLUDE=['nba','nfl','mlb','nhl','football','basketball','baseball','hockey','soccer','tennis','golf','oscar','grammy','emmy','super bowl','world series','champion','playoff','draft','player','game','score','team','season','match'];
+const KALSHI_EXCLUDE=['nba','nfl','mlb','nhl','football','basketball','baseball','hockey','soccer','tennis','golf','oscar','grammy','emmy','super bowl','world series','champion','playoff','draft','player','game','score','team','season','match','hits','strikeout','home run','batting','pitching','inning','yards','touchdown','rebounds','assists','goals','henderson','lindor','alonso','swanson','acuna','ohtani','judge','betts','tatis','soto','trout','mcneil','guerrero'];
 
 async function fetchKalshiMarkets(keywords=[]){
   if(window.location.protocol==='file:')return[];
@@ -9963,8 +9964,11 @@ async function fetchKalshiMarkets(keywords=[]){
     // Filter: must match macro keywords AND not match sports/entertainment
     const kw=[...KALSHI_MACRO_KW,...keywords,...(typeof m20Tickers!=='undefined'?m20Tickers:[])].map(k=>k.toLowerCase());
     const scored=markets.map(m=>{
-      const title=((m.title||'')+(m.subtitle||'')).toLowerCase();
-      // Exclude sports/entertainment
+      const title=((m.title||'')+(m.subtitle||'')+(m.category||'')).toLowerCase();
+      // Must match at least one macro keyword to qualify
+      const macroHits=KALSHI_MACRO_KW.filter(k=>title.includes(k)).length;
+      if(macroHits===0)return{...m,_relevance:-1};
+      // Also exclude known sports/entertainment terms
       if(KALSHI_EXCLUDE.some(ex=>title.includes(ex)))return{...m,_relevance:-1};
       const hits=kw.filter(k=>k.length>2&&title.includes(k)).length;
       return{...m,_relevance:hits};
@@ -12287,7 +12291,12 @@ if(_savedKey&&_savedKey.length>20){
 }
 // Pre-fill proxy URL if saved
 const _savedProxy=localStorage.getItem('sig_cf_worker_url');
-if(_savedProxy){const _pi=document.getElementById('proxyInp');if(_pi)_pi.value=_savedProxy;}
+if(_savedProxy){
+  const _pi=document.getElementById('proxyInp');if(_pi)_pi.value=_savedProxy;
+  const _psi=document.getElementById('proxySettInp');if(_psi)_psi.value=_savedProxy;
+  const _pn=document.getElementById('proxyNote');
+  if(_pn)_pn.innerHTML='<span style="color:var(--green)">✓ Proxy saved: '+_savedProxy+'</span>';
+}
 // init density on load
 setTimeout(applyDensity,100);
 
