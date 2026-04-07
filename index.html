@@ -1628,6 +1628,9 @@ button:focus-visible,a:focus-visible{outline:2px solid var(--acc);outline-offset
       <div class="set-lbl">Outside M20 Holdings</div>
       <input class="set-inp" id="extInp" placeholder="MU,NVDA,VST">
       <div class="set-note">Tracked separately alongside M20 in the Factor Lab.</div>
+      <div class="set-lbl">Cloudflare Proxy URL <span class="t-t3">(required for Yahoo Finance, Kalshi, Options IV)</span></div>
+      <input class="set-inp" id="proxySettInp" placeholder="https://signal-proxy.rtupler.workers.dev">
+      <div class="set-note">Enter your Cloudflare Worker proxy URL. Format: https://signal-proxy.YOUR-ID.workers.dev</div>
       <div class="set-lbl">NewsAPI Key <span class="t-t3">(optional — newsapi.org free, 100 req/day)</span></div>
       <input class="set-inp" id="newsapiInp" placeholder="your_newsapi_key">
       <div class="set-note">Enables real article summaries instead of Gemini-invented summaries. Get free key at newsapi.org.</div>
@@ -4408,6 +4411,7 @@ function closeGlossary(){
 
 function openSett(){
   document.getElementById('newsapiInp').value=localStorage.getItem('sig_newsapi')||'';
+  const _psi=document.getElementById('proxySettInp');if(_psi)_psi.value=localStorage.getItem('sig_cf_worker_url')||'';
   document.getElementById('m20Inp').value=m20Tickers.join(',');
   document.getElementById('extInp').value=extTickers.join(',');
   setTimeout(renderDiagnostics,100);
@@ -4639,6 +4643,7 @@ function saveSett(){
   const r=document.getElementById('regimeInp').value.trim();
   if(r)regime=r;
   const nk=document.getElementById('newsapiInp').value.trim();if(nk)localStorage.setItem('sig_newsapi',nk);
+  const pv=document.getElementById('proxySettInp');if(pv&&pv.value.trim()){localStorage.setItem('sig_cf_worker_url',pv.value.trim());const pi=document.getElementById('proxyInp');if(pi)pi.value=pv.value.trim();}else if(pv&&!pv.value.trim()){localStorage.removeItem('sig_cf_worker_url');}
   try{
     localStorage.setItem('sig_m20',m20Tickers.join(','));
     localStorage.setItem('sig_ext',extTickers.join(','));
