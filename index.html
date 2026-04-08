@@ -1,4 +1,5 @@
 <!DOCTYPE html>
+<!-- SIGNAL v35 build 2026-04-08 00:18:15 -->
 <html lang="en">
 <head>
 <meta charset="UTF-8">
@@ -1576,7 +1577,7 @@ button:focus-visible,a:focus-visible{outline:2px solid var(--acc);outline-offset
       <div class="gate-feat">
         <div class="gate-feat-icon">🌐</div>
         <div class="gate-feat-hd">World Sweep</div>
-        <div class="gate-feat-bd">9-domain parallel intelligence · Politics, Geo, Finance, Tech, Energy, Markets, Health, Defense, Science · GDELT + Reddit + SEC 8-K feeds</div>
+        <div class="gate-feat-bd">9-domain parallel intelligence · Politics, Geo, Finance, Tech, Energy, Markets, Health, Defense, Science · GDELT + SEC 8-K + Fed RSS feeds</div>
       </div>
       <div class="gate-feat">
         <div class="gate-feat-icon">⬡</div>
@@ -1604,7 +1605,7 @@ button:focus-visible,a:focus-visible{outline:2px solid var(--acc);outline-offset
         <div class="gate-feat-bd">Structured probability estimates vs live PM odds · Lead-time detection · Calibration curve · Event-type accuracy by category · Self-correcting via Brier feedback</div>
       </div>
     </div>
-    <div class="gate-note">All data stored locally · No account required · Powered by Gemini Flash 2.0 · 13 free data sources</div>
+    <div class="gate-note">All data stored locally · No account required · Powered by Gemini 2.5 Flash Lite · 13 free data sources</div>
   </div>
 </div>
 
@@ -5250,7 +5251,7 @@ async function fetchPolymarkets(limit=50){
 
 async function fetchPolymarketsByTopic(keywords){
   try{
-    const r=await fetch(`${PM_API}/markets?limit=30&sort=liquidity&order=desc`);
+    const r=await proxyFetch(`${PM_API}/markets?limit=30&sort=liquidity&order=desc`);
     if(!r.ok)return[];
     const data=await r.json();
     const kw=keywords.map(k=>k.toLowerCase());
