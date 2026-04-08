@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<!-- SIGNAL v35 build 2026-04-08 index-26 -->
+<!-- SIGNAL v35 build 2026-04-08 index-27 -->
 <html lang="en">
 <head>
 <meta charset="UTF-8">
@@ -2119,16 +2119,14 @@ button:focus-visible,a:focus-visible{outline:2px solid var(--acc);outline-offset
     <div class="markets-layout">
       <div class="markets-header">
         <div class="mkt-subtabs">
-          <button class="mkt-stab on" data-mtab="polymarket" onclick="switchMktTab('polymarket',this)">◈ Polymarket</button>
-          <button class="mkt-stab" data-mtab="kalshi" onclick="switchMktTab('kalshi',this)">◎ Kalshi</button>
+          <button class="mkt-stab on" data-mtab="kalshi" onclick="switchMktTab('kalshi',this)">◎ Kalshi</button>
           <button class="mkt-stab" data-mtab="divergence" onclick="switchMktTab('divergence',this)">⚡ PM Divergence</button>
         </div>
-        <div id="pmFilter" class="flex-row flex-wrap gap-2 pad-widget bb-1"></div>
+
       </div>
-      <div id="mktTabPolymarket" class="mkt-panel on">
-        <div class="pm-grid" id="pmGrid"><div class="empty" style="grid-column:1/-1;">Loading live markets…</div></div>
-      </div>
-      <div id="mktTabKalshi" class="mkt-panel" style="display:none;">
+      <!-- pmGrid retained as hidden element — used for story-level PM matching -->
+      <div id="pmGrid" style="display:none;"></div>
+      <div id="mktTabKalshi" class="mkt-panel on">
         <div style="padding:1.25rem;">
           <div class="section-label">Kalshi Markets</div>
           <div id="kalshiGrid" style="display:grid;grid-template-columns:1fr 1fr;gap:10px;"><div class="empty">Loading Kalshi…</div></div>
@@ -3902,7 +3900,7 @@ function switchPane(id){
   // Lazy load content
   if(stories.length&&!paneLoaded[id]){
     paneLoaded[id]=true;
-    if(id==='polymarket'||id==='markets'){renderPolymarket();}
+    if(id==='markets'){renderKalshi();}
     if(id==='bias')setTimeout(renderBias,50);   // slight delay so pane is visible first
     if(id==='alpha')setTimeout(renderAlpha,50);
     if(id==='divergence')setTimeout(()=>renderDivergence(false),50);
