@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<!-- SIGNAL v35 build 2026-04-08 index-25 -->
+<!-- SIGNAL v35 build 2026-04-08 index-26 -->
 <html lang="en">
 <head>
 <meta charset="UTF-8">
@@ -5198,20 +5198,49 @@ function pmProb(market, outcomeIdx=0){
   }catch{return 50;}
 }
 
+// ── POLYMARKET EXCLUSION FILTER ──────────────────────────
+// Gamma API returns random mix — no reliable sort or category filter.
+// Fetch 200, exclude noise, sort by volume, keep top 50 as signal pool.
+// Confirmed via console testing 2026-04-08: sports/weather/novelty dominate
+// unless explicitly excluded. "Before GTA VI" = novelty anchor, not signal.
+const PM_EXCLUDE=[
+  // Sports
+  'nba','nfl','mlb','nhl','fifa','world cup','super bowl','stanley cup','nba finals',
+  'nba rookie','championship','playoffs','win the 2026','win the 2025',
+  'goalscorer','anytime goal','kills over','kills under','map 2','map 3',
+  'trail blazers','golden state','warriors','lakers','celtics','heat','knicks',
+  // Weather/temperature
+  'highest temperature','temperature in','precipitation in','rainfall',
+  // Novelty anchors
+  'before gta vi','gta vi','before gta6',
+  // 2028 election nomination noise
+  'win the 2028','2028 democratic','2028 us presidential','2028 presidential',
+  'presidential nomination',
+  // Low-signal social
+  'posts from','tweets from','followers','subscribers',
+];
+
 async function fetchPolymarkets(limit=50){
   if(window.location.protocol==='file:')return[];
   try{
     const cached=cGet('polymarket',CACHE.polymarket);
     if(cached)return cached;
-    // Polymarket Gamma API — route through proxy to avoid CORS
-    const _pmUrl=`${PM_API}/markets?limit=${Math.min(limit,100)}&active=true&closed=false&order=volume&ascending=false`;
+    // Fetch 200 — API sort param is ignored, filter client-side
+    const _pmUrl=`${PM_API}/markets?limit=200&active=true&closed=false`;
     const r=await proxyFetch(_pmUrl);
     if(!r||!r.ok)throw new Error('Polymarket '+(r?r.status:'no response'));
     const raw=await r.json();
     const markets=Array.isArray(raw)?raw:(raw.markets||[]);
     const data=markets
-      .filter(m=>m.active!==false&&m.closed!==true&&m.outcomePrices!=null)
-      .slice(0,limit)
+      .filter(m=>{
+        if(m.active===false||m.closed===true||m.outcomePrices==null)return false;
+        const q=(m.question||'').toLowerCase();
+        // Exclude noise
+        if(PM_EXCLUDE.some(ex=>q.includes(ex)))return false;
+        return true;
+      })
+      .sort((a,b)=>(b.volume||0)-(a.volume||0))
+      .slice(0,50)
       .map(m=>({
         id: m.id||m.conditionId,
         question: m.question||m.title||'',
@@ -5222,6 +5251,7 @@ async function fetchPolymarkets(limit=50){
         url: `https://polymarket.com/event/${m.slug||m.id}`,
         resolved: m.resolved||false,
       }));
+    console.log(`[Polymarket] ${data.length} markets after exclusion filter (from ${markets.length} raw)`);
     if(data.length){
       cSet('polymarket',data);
       savePMSnapshot(data);
@@ -8195,32 +8225,68 @@ async function renderKalshi(){
 
 async function renderPolymarket(){
   setTabDot('polymarket','loading');
-  document.getElementById('pmGrid').innerHTML=`<div class="empty" style="grid-column:1/-1;">Fetching live markets…</div>`;
+  document.getElementById('pmGrid').innerHTML=`<div class="empty" style="grid-column:1/-1;">Fetching markets…</div>`;
+  document.getElementById('pmFilter').innerHTML='';
   try{
-    const data=await fetchPolymarkets(20);
+    const data=await fetchPolymarkets(50);
     polymarkets=data;
     const trackedIds=new Set(labGet('predictions').map(p=>p.marketId));
-    // Category filter chips
-    const cats=[...new Set(data.map(m=>m.category||'Other'))].slice(0,8);
-    document.getElementById('pmFilter').innerHTML=['All',...cats].map(c=>`
-      <button class="tp${c==='All'?' on':''}" data-cat="${esc(c)}" onclick="filterPM(this.dataset.cat,this)">${esc(c)}</button>`).join('');
-    // Sort by NMS divergence — information-edge markets surface first
-    const nmsAvg=stories.length?stories.reduce((a,s)=>a+(s.nms||0.5),0)/stories.length:0.5;
-    const sorted=[...data].sort((a,b)=>{
-      const pa=pmProb(a)/100,pb=pmProb(b)/100;
-      // Divergence = |NMS_session_avg - PM_prob|
-      const da=Math.abs(nmsAvg-pa),db=Math.abs(nmsAvg-pb);
-      return db-da; // highest divergence first
-    });
-    // Tag each market with its divergence
-    sorted.forEach(m=>{
-      const prob=pmProb(m)/100;
-      const div=Math.abs(nmsAvg-prob);
-      m._nmsDivergence=div;
-      m._infoEdge=div>0.15; // >15pp = potential information edge
-    });
-    renderPMCards(sorted,trackedIds);
-    // sidebar
+
+    // ── STORY-MATCHED MODE ──────────────────────────────────
+    // If stories are loaded, show only markets that match loaded stories.
+    // This is the primary intelligence value — connecting news to market odds.
+    const storyMatched=[];
+    if(stories.length&&data.length){
+      stories.forEach(s=>{
+        if(!s.pmMarketId)return;
+        const m=data.find(x=>x.id===s.pmMarketId);
+        if(m&&!storyMatched.find(x=>x.market.id===m.id)){
+          storyMatched.push({market:m,headline:s.headline,nms:s.nms,conf:s._pmConfidence||'medium'});
+        }
+      });
+    }
+
+    if(storyMatched.length){
+      // Story-matched view — show market + the story that matched it
+      document.getElementById('pmFilter').innerHTML=`<div style="font-size:9px;color:var(--teal);font-weight:700;letter-spacing:.06em;padding:.2rem 0;">◈ ${storyMatched.length} markets matched to loaded stories · Sorted by narrative relevance</div>`;
+      document.getElementById('pmGrid').innerHTML=storyMatched.map(({market:m,headline,nms,conf})=>{
+        const prob=pmProb(m);
+        const vol=m.volume>0?'$'+parseFloat(m.volume).toLocaleString('en-US',{maximumFractionDigits:0}):'—';
+        const isTracked=trackedIds.has(m.id);
+        const end=m.endDate?new Date(m.endDate).toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'}):'Open';
+        const nmsVal=Math.round((nms||0.5)*100);
+        const pmVal=prob;
+        const divergence=Math.abs(nmsVal-pmVal);
+        const divColor=divergence>20?'var(--amber)':divergence>10?'var(--t2)':'var(--t3)';
+        return`<div class="pm-card${isTracked?' tracked':''}">
+          <div class="pm-src">Polymarket${conf==='high'?'<span style="color:var(--green);margin-left:6px;font-size:8px;">● High match</span>':''}</div>
+          <div class="pm-q">${esc(m.question||'')}</div>
+          <div class="pm-gauge">
+            <div class="pm-yes" style="flex-basis:${prob}%">${prob}%</div>
+            <div class="pm-no" style="flex-basis:${100-prob}%">${100-prob}%</div>
+          </div>
+          <div style="font-size:9px;color:var(--t3);font-style:italic;line-height:1.3;margin:.25rem 0;">↳ ${esc(headline.slice(0,80))}${headline.length>80?'…':''}</div>
+          <div class="pm-meta">
+            <span>Vol: ${vol}</span>
+            <span style="color:${divColor};">NMS ${nmsVal} vs PM ${pmVal}% · Δ${divergence}pp</span>
+          </div>
+          <div style="display:flex;gap:6px;align-items:center;">
+            <button class="pm-track-btn${isTracked?' tracking':''}" data-mid="${esc(m.id)}" onclick="handleTrackById(this.dataset.mid,this)">${isTracked?'✓ Tracking':'+ Track Prediction'}</button>
+            ${isTracked?`<button class="pm-track-btn" data-mid="${esc(m.id)}" onclick="openResolveById(this.dataset.mid)">Resolve</button>`:''}
+          </div>
+        </div>`;
+      }).join('');
+    } else {
+      // ── FALLBACK: TOP VOLUME VIEW ─────────────────────────
+      // No story matches yet — show top markets by volume with load-stories prompt
+      const notice=stories.length
+        ? `<div style="font-size:9px;color:var(--t3);padding:.2rem 0;">No story-market matches yet — showing top ${Math.min(data.length,20)} markets by volume. Run ↺ Refresh to match markets to stories.</div>`
+        : `<div style="font-size:9px;color:var(--t3);padding:.2rem 0;">Load stories first (↺ Refresh) to see markets matched to today's news. Showing top markets by volume.</div>`;
+      document.getElementById('pmFilter').innerHTML=notice;
+      renderPMCards(data.slice(0,20),trackedIds);
+    }
+
+    // Sidebar — always show top 5 by volume
     document.getElementById('pmSide').innerHTML=data.slice(0,5).map(m=>{
       const prob=pmProb(m);
       return`<div class="sw-row" style="flex-direction:column;align-items:stretch;gap:3px;padding:.55rem .9rem;">
@@ -8240,11 +8306,9 @@ async function renderPolymarket(){
   }
 }
 function filterPM(cat,btn){
-  document.querySelectorAll('#pmFilter .tp').forEach(b=>b.classList.remove('on'));
-  btn.classList.add('on');
+  // Category filter retained for compatibility but hidden in new UI
   const trackedIds=new Set(labGet('predictions').map(p=>p.marketId));
-  const filtered=cat==='All'?polymarkets:polymarkets.filter(m=>(m.category||'Other')===cat);
-  renderPMCards(filtered,trackedIds);
+  renderPMCards(polymarkets.slice(0,20),trackedIds);
 }
 function renderPMCards(data,trackedIds){
   document.getElementById('pmGrid').innerHTML=data.map(m=>{
@@ -8253,17 +8317,15 @@ function renderPMCards(data,trackedIds){
     const isTracked=trackedIds.has(m.id);
     const end=m.endDate?new Date(m.endDate).toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'}):'Open';
     return`<div class="pm-card${isTracked?' tracked':''}">
-      <div class="pm-src">Polymarket${m.category?' · '+esc(m.category):''}${m._infoEdge?'<span class="chip" style="background:rgba(255,179,0,.12);color:var(--amber);font-size:8px;margin-left:6px;">⚡ Info Edge</span>':''}</div>
+      <div class="pm-src">Polymarket</div>
       <div class="pm-q">${esc(m.question||'')}</div>
       <div class="pm-gauge">
         <div class="pm-yes" style="flex-basis:${prob}%">${prob}%</div>
         <div class="pm-no" style="flex-basis:${100-prob}%">${100-prob}%</div>
       </div>
-      <div class="pm-meta"><span>Vol Total: ${vol}</span><span>Closes ${esc(end)}</span></div>
+      <div class="pm-meta"><span>Vol: ${vol}</span><span>Closes ${esc(end)}</span></div>
       <div style="display:flex;gap:6px;align-items:center;">
-        <button class="pm-track-btn${isTracked?' tracking':''}" data-mid="${esc(m.id)}" onclick="handleTrackById(this.dataset.mid,this)">
-          ${isTracked?'✓ Tracking':'+ Track Prediction'}
-        </button>
+        <button class="pm-track-btn${isTracked?' tracking':''}" data-mid="${esc(m.id)}" onclick="handleTrackById(this.dataset.mid,this)">${isTracked?'✓ Tracking':'+ Track Prediction'}</button>
         ${isTracked?`<button class="pm-track-btn" data-mid="${esc(m.id)}" onclick="openResolveById(this.dataset.mid)">Resolve</button>`:''}
       </div>
     </div>`;
