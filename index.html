@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<!-- SIGNAL v35 build 2026-04-08 index-27 -->
+<!-- SIGNAL v35 build 2026-04-08 index-29 -->
 <html lang="en">
 <head>
 <meta charset="UTF-8">
@@ -2302,7 +2302,7 @@ let readStories=new Set(JSON.parse(localStorage.getItem('sig_read')||'[]'));
 let m20Tickers=(localStorage.getItem('sig_m20')||'VRT,GEV,FSLY,SNDK,KLAC,LRCX,LITE,ETN,ANET,AVGO,COHR,PANW,CAT,PH,CRSP,IBKR,GE,LLY,VRTX,BE').split(',').map(t=>t.trim());
 let extTickers=(localStorage.getItem('sig_ext')||'MU,VST').split(',').map(t=>t.trim());
 let regime=localStorage.getItem('sig_regime')||'Risk-On';
-let paneLoaded={polymarket:false,bias:false,alpha:false,lab:false,divergence:false,worldsweep:false,predictions:false,m20brief:false,brief:false,markets:false,research:false};
+let paneLoaded={bias:false,alpha:false,lab:false,divergence:false,worldsweep:false,predictions:false,m20brief:false,brief:false,markets:false,research:false};
 let focusedIdx=-1;
 let isCompact=localStorage.getItem('sig_compact')==='1';
 // ── QUEUE ARCHITECTURE ────────────────────────────────────
@@ -5036,14 +5036,13 @@ const WORLD_DOMAINS=[
   {id:'defense',   label:'Defense',    topic:'Defense',       key:'WORLD'},
   {id:'science',   label:'Science',    topic:'Science',       key:'SCITECH'},
 ];
-// Multi-proxy fallback chain — 4 options before giving up
+// RSS proxy chain for Google News/Trends (need public proxies — CF worker can't fetch these)
+// Trimmed to working proxies only as of 2026-04-08. thingproxy + jsonp.afeld.me are dead.
 const RSS_PROXIES=[
   url=>`https://api.allorigins.win/get?url=${encodeURIComponent(url)}`,
   url=>`https://corsproxy.io/?${encodeURIComponent(url)}`,
   url=>`https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(url)}`,
   url=>`https://corsproxy.org/?${encodeURIComponent(url)}`,
-  url=>`https://thingproxy.freeboard.io/fetch/${url}`,
-  url=>`https://jsonp.afeld.me/?url=${encodeURIComponent(url)}`,
 ];
 async function fetchViaProxy(url){
   const _pvLabel='proxy:'+url.split('/')[2]?.slice(0,20);
@@ -5766,9 +5765,16 @@ async function fetchGDELT(domain='geo',limit=10){
   }catch{}
   try{
     const url=`${GDELT_API}?query=${encodeURIComponent(theme)}&mode=artlist&maxrecords=${limit}&sort=DateDesc&format=json&timespan=1440`; // last 24h
-    const raw=await fetchViaProxy(url);
-    if(!raw)return[];
-    const data=typeof raw==='string'?JSON.parse(raw):raw;
+    // Use Cloudflare Worker proxy — confirmed working; public proxies (fetchViaProxy) return 403
+    const r=await proxyFetch(url);
+    if(!r||!r.ok)return[];
+    const text=await r.text();
+    // GDELT rate limit returns plain text "Please limit your requests..."
+    if(!text||!text.trim().startsWith('{')){{
+      if(text&&text.length>0)console.warn('GDELT: rate limited or non-JSON response');
+      return[];
+    }}
+    const data=JSON.parse(text);
     const articles=(data?.articles||[]).slice(0,limit);
     const items=articles.map(a=>({
       title:(a.title||'').slice(0,120),
@@ -5909,6 +5915,10 @@ const _IV_CACHE_KEY='sig_iv_v1';
 let _ivData={}; // ticker -> {impliedMove, ivRank, flagged}
 
 async function fetchOptionsIV(tickers){
+  // Yahoo Finance v7/options now returns 401 — endpoint requires auth cookies.
+  // Disabled to prevent console spam. IV widget shows unavailable message.
+  renderIVWidget();
+  return {};
   if(window.location.protocol==='file:')return;
   const results={};
   const toFetch=tickers.slice(0,5); // cap at 5 to avoid rate limiting
@@ -5950,7 +5960,7 @@ async function renderIVWidget(){
   const el=document.getElementById('ivWidget');
   if(!el)return;
   const entries=Object.entries(_ivData).filter(([,d])=>d.impliedMove!=null);
-  if(!entries.length){el.innerHTML='<div class="txt-9 t-t3">Load stories to fetch IV data.</div>';return;}
+  if(!entries.length){el.innerHTML='<div class="txt-9 t-t3">Options IV unavailable — Yahoo Finance v7 endpoint requires authentication. Feature disabled.</div>';return;}
   el.innerHTML=`<div style="font-size:8px;color:var(--t3);margin-bottom:.3rem;">ATM straddle ÷ price = expected move (±)</div>`+
   entries.map(([ticker,d])=>{
     const alertColor=d.highAlert?'var(--red)':d.flagged?'var(--amber)':'var(--t2)';
@@ -6053,10 +6063,13 @@ async function fetchEdgarEvents(){
     }
   }catch{}
 
-  // SEC 8-K Atom feed — recent filings, public, no CORS issues via proxy
+  // SEC 8-K Atom feed — use Cloudflare Worker proxy (confirmed working 2026-04-08)
+  // fetchViaProxy uses public CORS proxies which are all failing — use proxyFetch instead
   const feedUrl='https://www.sec.gov/cgi-bin/browse-edgar?action=getcurrent&type=8-K&dateb=&owner=include&count=40&search_text=&output=atom';
   try{
-    const xml=await fetchViaProxy(feedUrl);
+    const r=await proxyFetch(feedUrl);
+    if(!r||!r.ok)throw new Error('no feed');
+    const xml=await r.text();
     if(!xml||!xml.includes('<entry>'))throw new Error('no feed');
 
     // Parse Atom XML entries
@@ -8086,7 +8099,7 @@ function renderFeed(data){
   if(data&&data.length>=3){
     setTimeout(()=>{ if(typeof generateNarrativeSynthesis==='function')generateNarrativeSynthesis(false); },400);
   }
-  paneLoaded={polymarket:false,bias:false,alpha:false,lab:false,divergence:false,brief:false,markets:false,research:false};
+  paneLoaded={bias:false,alpha:false,lab:false,divergence:false,brief:false,markets:false,research:false};
   if(!data||!data.length){document.getElementById('feedCol').innerHTML=`<div class="empty">No stories found.</div>`;return;}
   // Smart auto-density: scan for large feeds, cards for small
   // Top Stories is always scan (20+ items) — focused topics default to cards
@@ -8709,6 +8722,8 @@ function renderLabData(){
 
   // Factor correlation — regime-filtered
   const allWithReturns=outcomes.filter(o=>o.r14d!==null&&o.nmsAtCapture!==null);
+  // Hoist withReturns to outer scope — used in priceLog, scatter, and factorStats
+  const withReturns=_labRegimeFilter==='all'?allWithReturns:allWithReturns.filter(o=>o.regime===_labRegimeFilter);
   // Save IC snapshot — deduplicated by captureId so safe to call on every render
   if(allWithReturns.length>=5){
     const ic7now=computeIC(allWithReturns,'r7d');
@@ -8740,7 +8755,6 @@ function renderLabData(){
     const filterHtml=`<div style="display:flex;gap:4px;margin-bottom:.5rem;flex-wrap:wrap;">
       ${regimes.map(r=>`<button class="dt-btn${_labRegimeFilter===r?' on':''}" data-r="${r}" onclick="_labRegimeFilter=this.dataset.r;renderLabData();">${r==='all'?'All Regimes':r}</button>`).join('')}
     </div>`;
-    const withReturns=_labRegimeFilter==='all'?allWithReturns:allWithReturns.filter(o=>o.regime===_labRegimeFilter);
     fsEl.innerHTML=(regimes.length>2?filterHtml:'')+(withReturns.length>=5?buildFactorStats(withReturns):`<div class="empty" style="padding:.5rem;">Need ${Math.max(0,5-withReturns.length)} more resolved outcomes${_labRegimeFilter!=='all'?' for '+_labRegimeFilter:''}</div>`);
   }
 
@@ -11739,7 +11753,7 @@ async function loadAll(force=false){
   }
 
   btn.disabled=true;ico.classList.add('spinning');
-  paneLoaded={polymarket:false,bias:false,alpha:false,lab:false,divergence:false,brief:false,markets:false,research:false};
+  paneLoaded={bias:false,alpha:false,lab:false,divergence:false,brief:false,markets:false,research:false};
   setTabDot('feed','loading');
   _PERF.start('session'); // reset and start timing
 
