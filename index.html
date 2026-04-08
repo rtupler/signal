@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<!-- SIGNAL v35 build 2026-04-08 index-29 -->
+<!-- SIGNAL v35 build 2026-04-08 index-31 -->
 <html lang="en">
 <head>
 <meta charset="UTF-8">
@@ -1587,7 +1587,7 @@ button:focus-visible,a:focus-visible{outline:2px solid var(--acc);outline-offset
       <div class="gate-feat">
         <div class="gate-feat-icon">◈</div>
         <div class="gate-feat-hd">Prediction Market Signal</div>
-        <div class="gate-feat-bd">Polymarket + Kalshi EMA delta · Momentum not level · Regime-weighted · Yield curve overlay · Divergence classification</div>
+        <div class="gate-feat-bd">Polymarket story-matched signals · Kalshi macro series (Fed/CPI/BTC) · EMA delta momentum · Regime-weighted · Divergence classification</div>
       </div>
       <div class="gate-feat">
         <div class="gate-feat-icon">◉</div>
@@ -1629,7 +1629,7 @@ button:focus-visible,a:focus-visible{outline:2px solid var(--acc);outline-offset
       <div class="set-lbl">Outside M20 Holdings</div>
       <input class="set-inp" id="extInp" placeholder="MU,NVDA,VST">
       <div class="set-note">Tracked separately alongside M20 in the Factor Lab.</div>
-      <div class="set-lbl">Cloudflare Proxy URL <span class="t-t3">(required for Yahoo Finance, Kalshi, Options IV)</span></div>
+      <div class="set-lbl">Cloudflare Proxy URL <span class="t-t3">(required for Yahoo Finance, Kalshi, EDGAR, GDELT)</span></div>
       <input class="set-inp" id="proxySettInp" placeholder="https://signal-proxy.rtupler.workers.dev">
       <div class="set-note" id="proxyNote">Enter your Cloudflare Worker proxy URL. Format: https://signal-proxy.YOUR-ID.workers.dev</div>
       <div class="set-lbl">NewsAPI Key <span class="t-t3">(optional — newsapi.org free, 100 req/day)</span></div>
@@ -1735,7 +1735,7 @@ button:focus-visible,a:focus-visible{outline:2px solid var(--acc);outline-offset
         <div id="yieldCurveWidget" class="pad-widget txt-10 t-t3">Loading…</div>
       </div>
       <div class="sw-widget">
-        <div class="sw-hd">Polymarket · Top</div>
+        <div class="sw-hd">PM · Story Signals</div>
         <div id="pmSide"><div class="empty pad-widget txt-10">Loading…</div></div>
       </div>
       <div class="sw-widget">
@@ -1937,7 +1937,7 @@ button:focus-visible,a:focus-visible{outline:2px solid var(--acc);outline-offset
       <!-- PREDICTIONS LOG -->
       <div class="lab-card mb-5">
         <div class="lab-hd">Tracked Predictions <span class="lab-hd-act" id="predCount">0 total</span></div>
-        <div id="predLog"><div class="empty">No predictions tracked yet.<br>Track any Polymarket market from the Prediction Markets tab.</div></div>
+        <div id="predLog"><div class="empty">No predictions tracked yet.<br>Polymarket markets are matched to stories automatically after Refresh. Track predictions from story cards using the ◎ PM button.</div></div>
       </div>
 
       <!-- PRICE OUTCOMES -->
@@ -4328,7 +4328,7 @@ function boot(){
   if(window.location.protocol==='file:'||window.location.hostname===''){
     const _netMsg=(id,msg)=>{const el=document.getElementById(id);if(el)el.innerHTML=`<div style="padding:.75rem;font-size:10px;color:var(--amber);background:rgba(255,179,0,.06);border-radius:6px;border:1px solid rgba(255,179,0,.2);">⚠ ${msg}</div>`;};
     const _baseMsg='Unavailable in file:// mode — open via localhost or signal-6zc.pages.dev';
-    _netMsg('pmSide',_baseMsg+' for live Polymarket data.');
+    _netMsg('pmSide',_baseMsg+' for Polymarket story signals.');
     _netMsg('trendSide',_baseMsg+' for Google Trends.');
     _netMsg('mktBody',_baseMsg+' for live market prices.');
     _netMsg('pmGrid',_baseMsg+' for prediction markets.');
@@ -5806,14 +5806,14 @@ async function fetchGDELT(domain='geo',limit=10){
 }
 
 async function loadGDELTForSweep(){
-  // Load GDELT for geo + defense domains to augment World Sweep
-  const [geo,defense]=await Promise.allSettled([
-    fetchGDELT('geo',8),
-    fetchGDELT('defense',8)
-  ]);
-  const geoItems=geo.status==='fulfilled'?geo.value:[];
-  const defItems=defense.status==='fulfilled'?defense.value:[];
+  // Load GDELT sequentially — parallel calls trigger rate limiting
+  // 1s delay between calls; each has 15min cache so second call is usually cache hit
+  let geoItems=[], defItems=[];
+  try{ geoItems=await fetchGDELT('geo',8); }catch{}
+  await new Promise(res=>setTimeout(res,1000));
+  try{ defItems=await fetchGDELT('defense',8); }catch{}
   _gdeltStories=[...geoItems,...defItems];
+  console.log('[GDELT] loaded', _gdeltStories.length, 'stories');
   return _gdeltStories;
 }
 
@@ -5833,9 +5833,10 @@ async function fetchFedRSS(){
     }
   }catch{}
   try{
-    const raw=await fetchViaProxy(FED_RSS_URL);
-    if(!raw)return[];
-    const xml=typeof raw==='string'?raw:JSON.parse(raw).contents||raw;
+    // Use Cloudflare Worker proxy — public proxies (fetchViaProxy) return 403/fail for Fed RSS
+    const r=await proxyFetch(FED_RSS_URL);
+    if(!r||!r.ok)return[];
+    const xml=await r.text();
     const parser=new DOMParser();
     const doc=parser.parseFromString(xml,'text/xml');
     const items=[...doc.querySelectorAll('item')].slice(0,6).map(item=>({
@@ -8235,9 +8236,9 @@ async function renderKalshi(){
 }
 
 async function renderPolymarket(){
-  setTabDot('polymarket','loading');
-  document.getElementById('pmGrid').innerHTML=`<div class="empty" style="grid-column:1/-1;">Fetching markets…</div>`;
-  document.getElementById('pmFilter').innerHTML='';
+  // polymarket tab removed
+  const _pmGrid=document.getElementById('pmGrid');
+  if(_pmGrid)_pmGrid.innerHTML=`<div class="empty" style="grid-column:1/-1;">Fetching markets…</div>`;
   try{
     const data=await fetchPolymarkets(50);
     polymarkets=data;
@@ -8259,8 +8260,10 @@ async function renderPolymarket(){
 
     if(storyMatched.length){
       // Story-matched view — show market + the story that matched it
-      document.getElementById('pmFilter').innerHTML=`<div style="font-size:9px;color:var(--teal);font-weight:700;letter-spacing:.06em;padding:.2rem 0;">◈ ${storyMatched.length} markets matched to loaded stories · Sorted by narrative relevance</div>`;
-      document.getElementById('pmGrid').innerHTML=storyMatched.map(({market:m,headline,nms,conf})=>{
+      // pmFilter tab removed — story match count logged only
+      console.log('[PM] story-matched:', storyMatched.length, 'markets');
+      const _pmG=document.getElementById('pmGrid');
+      if(_pmG)_pmG.innerHTML=storyMatched.map(({market:m,headline,nms,conf})=>{
         const prob=pmProb(m);
         const vol=m.volume>0?'$'+parseFloat(m.volume).toLocaleString('en-US',{maximumFractionDigits:0}):'—';
         const isTracked=trackedIds.has(m.id);
@@ -8293,8 +8296,8 @@ async function renderPolymarket(){
       const notice=stories.length
         ? `<div style="font-size:9px;color:var(--t3);padding:.2rem 0;">No story-market matches yet — showing top ${Math.min(data.length,20)} markets by volume. Run ↺ Refresh to match markets to stories.</div>`
         : `<div style="font-size:9px;color:var(--t3);padding:.2rem 0;">Load stories first (↺ Refresh) to see markets matched to today's news. Showing top markets by volume.</div>`;
-      document.getElementById('pmFilter').innerHTML=notice;
-      renderPMCards(data.slice(0,20),trackedIds);
+      // pmFilter tab removed
+      // fallback view disabled — no visible PM tab
     }
 
     // Sidebar — always show top 5 by volume
@@ -8309,11 +8312,12 @@ async function renderPolymarket(){
         <div class="spark-mono"><span style="color:var(--green);">${prob}% YES</span><span style="color:var(--red);">${100-prob}% NO</span></div>
       </div>`;
     }).join('');
-    setTabDot('polymarket','loaded');
+    // polymarket tab removed
   }catch(e){
-    document.getElementById('pmGrid').innerHTML=`<div class="empty" style="grid-column:1/-1;color:var(--red);">Failed to load Polymarket: ${esc(e.message)}</div>`;
+    const _pmErr=document.getElementById('pmGrid');
+    if(_pmErr)_pmErr.innerHTML=`<div class="empty" style="grid-column:1/-1;color:var(--red);">Failed to load Polymarket: ${esc(e.message)}</div>`;
     toast('PM data unavailable — '+e.message.slice(0,40),'error',4000);
-    setTabDot('polymarket','idle');
+    // polymarket tab removed
   }
 }
 function filterPM(cat,btn){
@@ -9650,7 +9654,7 @@ function updateDataStatus(){
   if(!bar)return;
   const items=[
     {key:'rss',label:'News',real:'RSS Live',sim:'Gemini'},
-    {key:'polymarket',label:'Prediction',real:'Polymarket Live',sim:'Simulated'},
+    {key:'polymarket',label:'Prediction',real:'PM Story Signals',sim:'Simulated'},
     {key:'trends',label:'Trends',real:'Google Live',sim:'Gemini'},
     {key:'markets',label:'Markets',real:'Yahoo/CG Live',sim:'Gemini'},
     {key:'sentiment',label:'Sentiment',real:'AFINN NLP',sim:'Gemini Est.'},
@@ -11982,7 +11986,7 @@ async function loadAll(force=false){
       const pmData=_cachedPM.length?_cachedPM:[];
       document.getElementById('pmSide').innerHTML=pmData.slice(0,5).map(m=>{
         const prob=pmProb(m);
-        return`<div class="sw-row" style="flex-direction:column;align-items:stretch;gap:3px;padding:.5rem .9rem;cursor:pointer;" onclick="switchPane('polymarket')">
+        return`<div class="sw-row" style="flex-direction:column;align-items:stretch;gap:3px;padding:.5rem .9rem;cursor:pointer;" onclick="switchPane('markets')">
           <div class="txt-11-lh">${esc((m.question||'').slice(0,55))}…</div>
           <div style="display:flex;height:4px;border-radius:2px;overflow:hidden;">
             <div style="flex-basis:${prob}%;background:var(--green2);"></div><div class="pm-no-fill"></div>
@@ -12580,8 +12584,8 @@ setTimeout(applyDensity,100);
       <div class="glossary-section">
         <div class="glossary-section-title">Data Sources</div>
         <div class="gl-row">
-          <div class="gl-term">13 sources</div>
-          <div class="gl-def">Google News RSS · Polymarket · Kalshi · Yahoo Finance · Google Trends · CoinGecko · SEC EDGAR 8-K · Federal Reserve RSS · GDELT (geo/defense) · Reddit (tech) · Finviz (analyst) · Yahoo Finance options (IV) · Treasury yields (2s10s). All free. All no-auth.</div>
+          <div class="gl-term">11 sources</div>
+          <div class="gl-def">Google News RSS · Polymarket (story-matched signals) · Kalshi (Fed/CPI/BTC series) · Yahoo Finance · Google Trends · CoinGecko · SEC EDGAR 8-K · Federal Reserve RSS · GDELT (geo/defense) · Reddit (tech) · Finviz (analyst) · Treasury yields (2s10s). All free. All no-auth. <span style="color:var(--t3);">Note: Yahoo Finance options IV disabled (endpoint now requires auth).</span></div>
         </div>
         <div class="gl-row">
           <div class="gl-term">Why 30 sessions?</div>
