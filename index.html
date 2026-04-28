@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<!-- SIGNAL v35 build 2026-04-08 index-31 -->
+<!-- SIGNAL v35 build 2026-04-08 index-36 -->
 <html lang="en">
 <head>
 <meta charset="UTF-8">
@@ -8197,11 +8197,11 @@ async function renderKalshi(){
     el.innerHTML='<div class="empty" style="grid-column:1/-1;color:var(--t2);">Fetching Kalshi macro markets…<br><span style="font-size:9px;color:var(--t3);">Probing Fed · CPI · Bitcoin series (~6s)</span></div>';
     try{
       _kalshiMarkets=await fetchKalshiMarkets();
-    }catch(e){
+      }catch(e){
       el.innerHTML='<div class="empty" style="grid-column:1/-1;color:var(--red);">Kalshi fetch failed: '+esc(e.message)+'</div>';
       return;
     }
-  }
+    renderKalshi();return;  }
   if(!_kalshiMarkets||!_kalshiMarkets.length){
     el.innerHTML=`<div class="empty" style="grid-column:1/-1;">
       <div style="color:var(--t2);margin-bottom:.5rem;">No open Kalshi macro markets right now.</div>
