@@ -994,7 +994,7 @@ button:focus-visible,a:focus-visible{outline:2px solid var(--acc);outline-offset
 <div class="gate" id="gate">
   <div class="gate-box">
     <div class="gate-eyebrow">Predictive Intelligence Platform</div>
-    <div class="gate-logo">SIGNAL<span class="gate-v">v40</span></div>
+    <div class="gate-logo">SIGNAL<span class="gate-v">v41</span></div>
     <div class="gate-tagline">Narrative Momentum Score · NMI composite · <strong>Velocity-weighted event prediction</strong> · M20 portfolio signal · Self-calibrating Factor Lab</div>
     <div class="gate-sep"></div>
     <div class="gate-label">Gemini API Key <span style="color:rgba(255,255,255,.3);font-weight:400;letter-spacing:0;text-transform:none;">(aistudio.google.com — free)</span></div>
@@ -1220,7 +1220,7 @@ button:focus-visible,a:focus-visible{outline:2px solid var(--acc);outline-offset
   <div class="pane" id="pane-polymarket">
     <div class="scroll">
       <div class="mb-5">
-        <div class="section-label">Prediction Markets · Polymarket Live Data</div>
+        <div class="section-label">Prediction Markets · Kalshi Live Data</div>
         <div class="pane-title">Real money-backed crowd probabilities. Tracked predictions are logged to the Factor Lab for accuracy scoring.</div>
       </div>
       <div id="pmFilter" style="display:flex;gap:5px;margin-bottom:1rem;flex-wrap:wrap;"></div>
@@ -7382,7 +7382,7 @@ function updateDataStatus(){
   if(!bar)return;
   const items=[
     {key:'rss',label:'News',real:'RSS Live',sim:'Gemini'},
-    {key:'polymarket',label:'Prediction',real:'Polymarket Live',sim:'Simulated'},
+    {key:'polymarket',label:'Prediction',real:'Kalshi Live',sim:'Simulated'},
     {key:'trends',label:'Trends',real:'Google Live',sim:'Gemini'},
     {key:'markets',label:'Markets',real:'Yahoo/CG Live',sim:'Gemini'},
     {key:'sentiment',label:'Sentiment',real:'AFINN NLP',sim:'Gemini Est.'},
@@ -9448,6 +9448,7 @@ async function loadAll(force=false){
     fetchFedRSS().catch(()=>{});
     fetchKalshiMarkets().then(km=>{
       _kalshiMarkets=km;
+      renderKalshi();
       if(km.length&&enrichedStories){
         enrichedStories.forEach(s=>{
           if(!s.pmMarketId)return;
