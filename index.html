@@ -994,7 +994,7 @@ button:focus-visible,a:focus-visible{outline:2px solid var(--acc);outline-offset
 <div class="gate" id="gate">
   <div class="gate-box">
     <div class="gate-eyebrow">Predictive Intelligence Platform</div>
-    <div class="gate-logo">SIGNAL<span class="gate-v">v38</span></div>
+    <div class="gate-logo">SIGNAL<span class="gate-v">v39</span></div>
     <div class="gate-tagline">Narrative Momentum Score · NMI composite · <strong>Velocity-weighted event prediction</strong> · M20 portfolio signal · Self-calibrating Factor Lab</div>
     <div class="gate-sep"></div>
     <div class="gate-label">Gemini API Key <span style="color:rgba(255,255,255,.3);font-weight:400;letter-spacing:0;text-transform:none;">(aistudio.google.com — free)</span></div>
@@ -3861,7 +3861,7 @@ function pmProb(market, outcomeIdx=0){
 }
 
 async function fetchPolymarkets(limit=50){
-  if(window.location.protocol==='file:')return[];
+  return []; // Polymarket retained at story-level context only — standalone fetch disabled
   try{
     const cached=cGet('polymarket',CACHE.polymarket);
     if(cached)return cached;
