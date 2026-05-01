@@ -994,7 +994,7 @@ button:focus-visible,a:focus-visible{outline:2px solid var(--acc);outline-offset
 <div class="gate" id="gate">
   <div class="gate-box">
     <div class="gate-eyebrow">Predictive Intelligence Platform</div>
-    <div class="gate-logo">SIGNAL<span class="gate-v">v36</span></div>
+    <div class="gate-logo">SIGNAL<span class="gate-v">v37</span></div>
     <div class="gate-tagline">Narrative Momentum Score · NMI composite · <strong>Velocity-weighted event prediction</strong> · M20 portfolio signal · Self-calibrating Factor Lab</div>
     <div class="gate-sep"></div>
     <div class="gate-label">Gemini API Key <span style="color:rgba(255,255,255,.3);font-weight:400;letter-spacing:0;text-transform:none;">(aistudio.google.com — free)</span></div>
@@ -1445,7 +1445,6 @@ button:focus-visible,a:focus-visible{outline:2px solid var(--acc);outline-offset
 
   <!-- SAVED -->
   <div class="pane" id="pane-saved">
-    <div style="padding:.5rem 1rem .25rem;font-size:9px;color:var(--t3);letter-spacing:.06em;text-transform:uppercase;">Saved <span id="savedCt" style="color:var(--acc);font-weight:700;"></span></div>
     <div class="scroll" id="savedCol"><div class="saved-empty">◇<br><br>No saved stories yet.</div></div>
   </div>
   <!-- BRIEF PANE: M20 Brief + Intelligence Synthesis combined -->
@@ -6478,12 +6477,12 @@ function renderLabData(){
   }
   // Build regime filter UI
   const regimes=['all',...new Set(allWithReturns.map(o=>o.regime).filter(Boolean))];
+  const withReturns=_labRegimeFilter==='all'?allWithReturns:allWithReturns.filter(o=>o.regime===_labRegimeFilter);
   const fsEl=document.getElementById('factorStats');
   if(fsEl){
     const filterHtml=`<div style="display:flex;gap:4px;margin-bottom:.5rem;flex-wrap:wrap;">
       ${regimes.map(r=>`<button class="dt-btn${_labRegimeFilter===r?' on':''}" data-r="${r}" onclick="_labRegimeFilter=this.dataset.r;renderLabData();">${r==='all'?'All Regimes':r}</button>`).join('')}
     </div>`;
-    const withReturns=_labRegimeFilter==='all'?allWithReturns:allWithReturns.filter(o=>o.regime===_labRegimeFilter);
     fsEl.innerHTML=(regimes.length>2?filterHtml:'')+(withReturns.length>=5?buildFactorStats(withReturns):`<div class="empty" style="padding:.5rem;">Need ${Math.max(0,5-withReturns.length)} more resolved outcomes${_labRegimeFilter!=='all'?' for '+_labRegimeFilter:''}</div>`);
   }
 
@@ -7154,7 +7153,7 @@ function saveNote(idx,note){
     try{localStorage.setItem('sig_saved',JSON.stringify(savedStories));}catch{}
   }
 }
-function updateSavedCount(){const el=document.getElementById('savedCt');if(el)el.textContent=savedStories.length||'';}
+function updateSavedCount(){document.getElementById('savedCt').textContent=savedStories.length;}
 function toggleSave(idx){
   const s=stories[idx];
   const ei=savedStories.findIndex(x=>x.headline===s.headline);
@@ -9826,7 +9825,7 @@ function checkThursdayReminder(){
 const _savedKey=localStorage.getItem('sig_apikey');
 if(_savedKey&&_savedKey.length>20){
   document.getElementById('keyInp').value=_savedKey;
-  const _gaf=document.getElementById('gate-autofill');if(_gaf)_gaf.style.display='block';
+  document.getElementById('gate-autofill').style.display='block';
 }
 // Pre-fill proxy URL if saved
 const _savedProxy=localStorage.getItem('sig_cf_worker_url');
