@@ -994,7 +994,7 @@ button:focus-visible,a:focus-visible{outline:2px solid var(--acc);outline-offset
 <div class="gate" id="gate">
   <div class="gate-box">
     <div class="gate-eyebrow">Predictive Intelligence Platform</div>
-    <div class="gate-logo">SIGNAL<span class="gate-v">v39</span></div>
+    <div class="gate-logo">SIGNAL<span class="gate-v">v40</span></div>
     <div class="gate-tagline">Narrative Momentum Score · NMI composite · <strong>Velocity-weighted event prediction</strong> · M20 portfolio signal · Self-calibrating Factor Lab</div>
     <div class="gate-sep"></div>
     <div class="gate-label">Gemini API Key <span style="color:rgba(255,255,255,.3);font-weight:400;letter-spacing:0;text-transform:none;">(aistudio.google.com — free)</span></div>
@@ -1532,8 +1532,7 @@ button:focus-visible,a:focus-visible{outline:2px solid var(--acc);outline-offset
     <div class="markets-layout">
       <div class="markets-header">
         <div class="mkt-subtabs">
-          <button class="mkt-stab on" data-mtab="polymarket" onclick="switchMktTab('polymarket',this)">◈ Polymarket</button>
-          <button class="mkt-stab" data-mtab="kalshi" onclick="switchMktTab('kalshi',this)">◎ Kalshi</button>
+          <button class="mkt-stab on" data-mtab="kalshi" onclick="switchMktTab('kalshi',this)">◎ Kalshi</button>
           <button class="mkt-stab" data-mtab="divergence" onclick="switchMktTab('divergence',this)">⚡ PM Divergence</button>
         </div>
         <div id="pmFilter" class="flex-row flex-wrap gap-2 pad-widget bb-1"></div>
@@ -3011,7 +3010,7 @@ function switchPane(id){
   // Lazy load content
   if(stories.length&&!paneLoaded[id]){
     paneLoaded[id]=true;
-    if(id==='polymarket'||id==='markets'){renderPolymarket();}
+    if(id==='markets'){renderKalshi();}
     if(id==='bias')setTimeout(renderBias,50);   // slight delay so pane is visible first
     if(id==='alpha')setTimeout(renderAlpha,50);
     if(id==='divergence')setTimeout(()=>renderDivergence(false),50);
@@ -3861,7 +3860,7 @@ function pmProb(market, outcomeIdx=0){
 }
 
 async function fetchPolymarkets(limit=50){
-  return []; // Polymarket retained at story-level context only — standalone fetch disabled
+  if(window.location.protocol==='file:')return[];
   try{
     const cached=cGet('polymarket',CACHE.polymarket);
     if(cached)return cached;
@@ -6126,9 +6125,12 @@ async function renderKalshi(){
     const prob=kalshiProb(m);
     const vol=m.volume||(m.open_interest||0);
     const volStr=vol>0?'$'+Math.round(vol/100).toLocaleString():'—';
+    const rawTitle=m.title||m.subtitle||'';
+    const isParlay=/yes .+,yes /i.test(rawTitle);
+    const displayTitle=isParlay?(m.subtitle||m.series_title||'[Parlay contract]'):rawTitle;
     return`<div class="pm-card">
       <div class="pm-src" style="color:var(--teal);">Kalshi · ${esc((m.category||m.market_type||'Event').slice(0,20))}</div>
-      <div class="pm-q">${esc((m.title||m.subtitle||'').slice(0,80))}${(m.title||'').length>80?'…':''}</div>
+      <div class="pm-q">${esc(displayTitle.slice(0,80))}${displayTitle.length>80?'…':''}</div>
       <div class="pm-gauge">
         <div class="pm-yes" style="flex-basis:${prob}%;background:rgba(38,212,200,.7);">${prob}%</div>
         <div class="pm-no" style="flex-basis:${100-prob}%;">${100-prob}%</div>
