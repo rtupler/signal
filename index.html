@@ -994,7 +994,7 @@ button:focus-visible,a:focus-visible{outline:2px solid var(--acc);outline-offset
 <div class="gate" id="gate">
   <div class="gate-box">
     <div class="gate-eyebrow">Predictive Intelligence Platform</div>
-    <div class="gate-logo">SIGNAL<span class="gate-v">v42</span></div>
+    <div class="gate-logo">SIGNAL<span class="gate-v">v43</span></div>
     <div class="gate-tagline">Narrative Momentum Score · NMI composite · <strong>Velocity-weighted event prediction</strong> · M20 portfolio signal · Self-calibrating Factor Lab</div>
     <div class="gate-sep"></div>
     <div class="gate-label">Gemini API Key <span style="color:rgba(255,255,255,.3);font-weight:400;letter-spacing:0;text-transform:none;">(aistudio.google.com — free)</span></div>
@@ -7601,48 +7601,27 @@ async function fetchM20RelatedMarkets(){
 
 
 // ── KALSHI API — FREE PUBLIC MARKET DATA ─────────────────────
-const KALSHI_API='https://trading-api.kalshi.com/trade-api/v2';
+const KALSHI_API='https://api.elections.kalshi.com/trade-api/v2';
 let _kalshiCache={}; // marketId -> {prob, ts}
-
-const KALSHI_MACRO_SERIES=[
-  'KXFED','KXCPI','KXBTC','KXINFL','KXGDP','KXUNEMP','KXPCE',
-  'KXSPX','KXNDX','KXOIL','KXGOLD','KXDXY','KXDEBT','KXTARIFF'
-];
-
-async function fetchKalshiSeries(seriesId){
-  try{
-    const r=await proxyFetch(`${KALSHI_API}/series/${seriesId}/markets?limit=5&status=open`);
-    if(!r.ok)return[];
-    const d=await r.json();
-    return(d.markets||[]).map(m=>({...m,_series:seriesId}));
-  }catch{return[];}
-}
 
 async function fetchKalshiMarkets(keywords=[]){
   if(window.location.protocol==='file:')return[];
   try{
-    // Fetch macro series sequentially to avoid rate limits
-    const results=[];
-    for(const series of KALSHI_MACRO_SERIES){
-      const markets=await fetchKalshiSeries(series);
-      results.push(...markets);
-      if(markets.length)await new Promise(r=>setTimeout(r,300));
-    }
-    // If macro series returned nothing, fall back to keyword search
-    if(!results.length){
-      const params=new URLSearchParams({limit:'100',status:'open'});
-      const r=await proxyFetch(`${KALSHI_API}/markets?${params}`);
-      if(!r.ok)return[];
-      const d=await r.json();
-      const markets=d.markets||[];
-      const kw=[...keywords,...['Fed','rate','inflation','GDP','recession','AI']].map(k=>k.toLowerCase());
-      return markets.map(m=>({...m,_relevance:kw.filter(k=>k.length>2&&((m.title||'')+(m.subtitle||'')).toLowerCase().includes(k)).length}))
-        .filter(m=>m._relevance>0).sort((a,b)=>b._relevance-a._relevance).slice(0,20);
-    }
-    // Score macro results by keyword relevance
-    const kw=[...keywords,...m20Tickers,...['Fed','rate','inflation','GDP','recession']].map(k=>k.toLowerCase());
-    return results.map(m=>({...m,_relevance:kw.filter(k=>k.length>2&&((m.title||'')+(m.subtitle||'')).toLowerCase().includes(k)).length+1}))
-      .sort((a,b)=>b._relevance-a._relevance);
+    const params=new URLSearchParams({limit:'200',status:'open'});
+    const r=await proxyFetch(`${KALSHI_API}/markets?${params}`);
+    if(!r.ok)return[];
+    const d=await r.json();
+    const markets=d.markets||[];
+    // Filter out machine-generated parlay contracts
+    const clean=markets.filter(m=>!/yes .+,yes /i.test(m.title||''));
+    // Score by macro keyword relevance
+    const kw=[...keywords,...['Fed','rate','inflation','GDP','recession','CPI','jobs','tariff','oil','gold','bitcoin','election','debt','spending']].map(k=>k.toLowerCase());
+    const scored=clean.map(m=>{
+      const title=((m.title||'')+(m.subtitle||'')).toLowerCase();
+      const hits=kw.filter(k=>k.length>2&&title.includes(k)).length;
+      return{...m,_relevance:hits};
+    }).filter(m=>m._relevance>0).sort((a,b)=>b._relevance-a._relevance);
+    return scored.length?scored.slice(0,20):clean.slice(0,20);
   }catch(e){
     console.warn('Kalshi fetch failed:',e.message);
     return[];
