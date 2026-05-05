@@ -994,7 +994,7 @@ button:focus-visible,a:focus-visible{outline:2px solid var(--acc);outline-offset
 <div class="gate" id="gate">
   <div class="gate-box">
     <div class="gate-eyebrow">Predictive Intelligence Platform</div>
-    <div class="gate-logo">SIGNAL<span class="gate-v">v44</span></div>
+    <div class="gate-logo">SIGNAL<span class="gate-v">v45</span></div>
     <div class="gate-tagline">Narrative Momentum Score · NMI composite · <strong>Velocity-weighted event prediction</strong> · M20 portfolio signal · Self-calibrating Factor Lab</div>
     <div class="gate-sep"></div>
     <div class="gate-label">Gemini API Key <span style="color:rgba(255,255,255,.3);font-weight:400;letter-spacing:0;text-transform:none;">(aistudio.google.com — free)</span></div>
@@ -6496,7 +6496,7 @@ function renderLabData(){
     <div class="pred-item">
       <div class="pred-q">${esc(p.question)}</div>
       <div class="pred-meta">
-        <span class="pred-conf t-purple">${p.yesProb}% YES</span>
+        <span class="pred-conf t-purple">${p.yesProb??p.confidence??'—'}% ${p.yesProb!=null?'YES':'conf'}</span>
         <span class="pred-status ${p.resolved?(p.correct?'ps-correct':'ps-wrong'):'ps-pending'}">${p.resolved?(p.correct?'✓ Correct':'✕ Wrong'):'Pending'}</span>
         <span class="t-t3">${new Date(p.ts).toLocaleDateString()}</span>
         ${p.resolutionDate?`<span class="t-t3">Closes ${new Date(p.resolutionDate).toLocaleDateString()}</span>`:''}
@@ -8247,15 +8247,15 @@ async function generateEventPredictions(force=false){
     const raw=await gemini(
 `You are a superforecaster. Today is ${today}.
 
-Current headlines:\n${currentHeadlines||'none'}
+Current headlines:
+${currentHeadlines||'none'}
 
 Narrative clusters forming: ${clusterContext||'none'}
 High-NMS stories: ${nmsLeaders||'none'}
 Prediction markets: ${pmContext||'none'}
 Current regime: ${regime}
 
-Based ONLY on the above signals, generate 5 probabilistic event predictions directly grounded in these specific stories and headlines.
-Each prediction must be SPECIFIC, VERIFIABLE, and derived from the actual headlines above — not general knowledge.
+Based ONLY on the above signals, generate 5 probabilistic event predictions directly grounded in these specific stories and headlines. Do not generate predictions about topics not present in the headlines above.
 
 Return JSON array:
 [{
