@@ -994,7 +994,7 @@ button:focus-visible,a:focus-visible{outline:2px solid var(--acc);outline-offset
 <div class="gate" id="gate">
   <div class="gate-box">
     <div class="gate-eyebrow">Predictive Intelligence Platform</div>
-    <div class="gate-logo">SIGNAL<span class="gate-v">v50</span></div>
+    <div class="gate-logo">SIGNAL<span class="gate-v">v51</span></div>
     <div class="gate-tagline">Narrative Momentum Score · NMI composite · <strong>Velocity-weighted event prediction</strong> · M20 portfolio signal · Self-calibrating Factor Lab</div>
     <div class="gate-sep"></div>
     <div class="gate-label">Gemini API Key <span style="color:rgba(255,255,255,.3);font-weight:400;letter-spacing:0;text-transform:none;">(aistudio.google.com — free)</span></div>
@@ -1028,8 +1028,8 @@ button:focus-visible,a:focus-visible{outline:2px solid var(--acc);outline-offset
       </div>
       <div class="gate-feat">
         <div class="gate-feat-icon">◈</div>
-        <div class="gate-feat-hd">PM Signal</div>
-        <div class="gate-feat-bd">Polymarket + Kalshi EMA delta · momentum not level · regime-weighted (PM 50–65% of NMS by VIX) · yield curve overlay</div>
+        <div class="gate-feat-hd">Prediction Signal</div>
+        <div class="gate-feat-bd">Kalshi macro markets · EMA delta · momentum not level · regime-weighted (PM 50–65% of NMS by VIX) · yield curve overlay</div>
       </div>
       <div class="gate-feat">
         <div class="gate-feat-icon">◉</div>
@@ -1245,7 +1245,7 @@ button:focus-visible,a:focus-visible{outline:2px solid var(--acc);outline-offset
   <div class="pane" id="pane-alpha">
     <div class="scroll">
       <div class="pane-hd"><div class="pane-hd-inner"><div class="pane-eyebrow">Alpha Signals · NMS Intelligence</div>
-        <div class="pane-title">Narrative Momentum Score per ticker. Grounded in real news content and Polymarket macro signals.</div>
+        <div class="pane-title">Narrative Momentum Score per ticker. Grounded in real news content and Kalshi macro signals.</div>
       </div></div>
       <div class="m20-panel" id="m20Panel">
         <div class="m20-hd">↯ M20 Portfolio · Narrative Momentum Scores</div>
@@ -1349,7 +1349,7 @@ button:focus-visible,a:focus-visible{outline:2px solid var(--acc);outline-offset
       <!-- PREDICTIONS LOG -->
       <div class="lab-card mb-5">
         <div class="lab-hd">Tracked Predictions <span class="lab-hd-act" id="predCount">0 total</span></div>
-        <div id="predLog"><div class="empty">No predictions tracked yet.<br>Track any Polymarket market from the Prediction Markets tab.</div></div>
+        <div id="predLog"><div class="empty">No predictions tracked yet.<br>Generate predictions from the Lab tab to build your track record.</div></div>
       </div>
 
       <!-- PRICE OUTCOMES -->
@@ -1391,8 +1391,8 @@ button:focus-visible,a:focus-visible{outline:2px solid var(--acc);outline-offset
     <div class="scroll">
       <div style="margin-bottom:.75rem;display:flex;align-items:flex-start;justify-content:space-between;flex-wrap:wrap;gap:.5rem;">
         <div>
-          <div class="section-label">Divergence Detector · News vs Trends vs Polymarket</div>
-          <div class="pane-title">Cross-layer gap analysis · Polymarket vs Kalshi consensus fragility · <span style="color:var(--green);">⚡ Just Converged</span> = was divergent, now resolving — the highest-priority signal · Where signals disagree is where prediction lives.</div>
+          <div class="section-label">Divergence Detector · News vs Trends vs Prediction Markets</div>
+          <div class="pane-title">Cross-layer gap analysis · Kalshi consensus fragility · <span style="color:var(--green);">⚡ Just Converged</span> = was divergent, now resolving — the highest-priority signal · Where signals disagree is where prediction lives.</div>
         </div>
         <button class="hbtn-ghost hbtn" onclick="renderDivergence(true)" class="txt-10">↻ Recompute</button>
       </div>
@@ -1433,8 +1433,8 @@ button:focus-visible,a:focus-visible{outline:2px solid var(--acc);outline-offset
         </div>
         <div class="ask-sugs">
           <span class="ask-sug" onclick="setAsk(this)">Which M20 holdings face the highest narrative risk right now?</span>
-          <span class="ask-sug" onclick="setAsk(this)">Where do Polymarket odds diverge most from news sentiment?</span>
-          <span class="ask-sug" onclick="setAsk(this)">What story is being underreported vs its Polymarket probability?</span>
+          <span class="ask-sug" onclick="setAsk(this)">Where do Kalshi odds diverge most from news sentiment?</span>
+          <span class="ask-sug" onclick="setAsk(this)">What story is being underreported vs its prediction market probability?</span>
           <span class="ask-sug" onclick="setAsk(this)">What macro event has the highest predicted probability today?</span>
           <span class="ask-sug" onclick="setAsk(this)">Summarize what today's news predicts for the next 30 days</span>
         </div>
@@ -1533,7 +1533,7 @@ button:focus-visible,a:focus-visible{outline:2px solid var(--acc);outline-offset
       <div class="markets-header">
         <div class="mkt-subtabs">
           <button class="mkt-stab on" data-mtab="kalshi" onclick="switchMktTab('kalshi',this)">◎ Kalshi</button>
-          <button class="mkt-stab" data-mtab="divergence" onclick="switchMktTab('divergence',this)">⚡ PM Divergence</button>
+          <button class="mkt-stab" data-mtab="divergence" onclick="switchMktTab('divergence',this)">⚡ Divergence</button>
         </div>
         <div id="pmFilter" class="flex-row flex-wrap gap-2 pad-widget bb-1"></div>
       </div>
