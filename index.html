@@ -1687,8 +1687,7 @@ function enrichSentiments(stories){
 // Next:    gemini-3.1-flash-lite-preview (primary), gemini-2.5-flash (fallback until GA)
 const MODEL_PRIMARY='gemini-2.5-flash-lite';
 const MODEL_FALLBACK='gemini-2.5-flash';
-const MODEL_FALLBACK2='gemini-2.0-flash-lite-001';
-const MODELS=[MODEL_PRIMARY,MODEL_FALLBACK,MODEL_FALLBACK2];
+const MODELS=[MODEL_PRIMARY,MODEL_FALLBACK];
 const GEMINI='https://generativelanguage.googleapis.com/v1beta/models';
 const PM_API='https://gamma-api.polymarket.com';
 const YAHOO='https://query1.finance.yahoo.com/v8/finance/chart';
@@ -3673,7 +3672,7 @@ async function _doFetch(model,prompt,sys,search,maxTok=2500,jsonMode=true){
   const MAX_RETRIES=3;
   for(let attempt=0;attempt<MAX_RETRIES;attempt++){
     const ctrl=new AbortController();
-    const tid=setTimeout(()=>ctrl.abort(),15000);
+    const tid=setTimeout(()=>ctrl.abort(),8000);
     let r;
     try{
       r=await fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body),signal:ctrl.signal}).finally(()=>clearTimeout(tid));
@@ -8310,7 +8309,7 @@ Be specific: "Fed cuts 25bp in May 2026" not "Fed may cut rates".`,
       };
     });
     log.push(...newForecasts);
-    saveForecastLog(log);
+    saveForecastLog(log);try{const _lp=JSON.parse(localStorage.getItem("lab_predictions")||"[]");newForecasts.forEach(f=>{_lp.push({id:"auto_"+Date.now()+"_"+Math.random().toString(36).slice(2),ts:new Date().toISOString(),question:f.event,confidence:f.confidence,horizon:f.horizon,isAuto:true,resolved:false,correct:null});});localStorage.setItem("lab_predictions",JSON.stringify(_lp.slice(-100)));}catch(e){}
     renderEventPredictions(newForecasts);
     setTabDot('predictions','loaded');
   }catch(e){
@@ -8370,7 +8369,7 @@ function resolveForecast(id,correct){
   if(f){
     f.resolved=true;f.correct=correct;
     f.resolvedAt=new Date().toISOString();
-    saveForecastLog(log);
+    saveForecastLog(log);try{const _lp=JSON.parse(localStorage.getItem("lab_predictions")||"[]");newForecasts.forEach(f=>{_lp.push({id:"auto_"+Date.now()+"_"+Math.random().toString(36).slice(2),ts:new Date().toISOString(),question:f.event,confidence:f.confidence,horizon:f.horizon,isAuto:true,resolved:false,correct:null});});localStorage.setItem("lab_predictions",JSON.stringify(_lp.slice(-100)));}catch(e){}
     renderForecastLog();
     toast(correct?'Forecast correct! Logged.':'Forecast wrong. Logged.',correct?'success':'warning',2500);
   }
