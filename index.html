@@ -10,8 +10,8 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="SIGNAL">
 <link rel="apple-touch-icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 180 180'%3E%3Crect width='180' height='180' rx='40' fill='%23080A0D'/%3E%3Ctext x='90' y='115' font-family='Georgia,serif' font-size='68' font-weight='700' fill='%2300C8FF' text-anchor='middle'%3ES%3C/text%3E%3Ccircle cx='138' cy='45' r='12' fill='%2300E676'/%3E%3C/svg%3E">
-<link rel="manifest" href="data:application/json,%7B%22name%22%3A%22SIGNAL+v34+%E2%80%94+Predictive+Intelligence%22%2C%22short_name%22%3A%22SIGNAL%22%2C%22description%22%3A%22Narrative+momentum+platform+for+M20+portfolio+signals%22%2C%22start_url%22%3A%22.%2F%22%2C%22display%22%3A%22standalone%22%2C%22background_color%22%3A%22%23080A0D%22%2C%22theme_color%22%3A%22%23080A0D%22%2C%22orientation%22%3A%22portrait-primary%22%2C%22icons%22%3A%5B%7B%22src%22%3A%22data%3Aimage%2Fsvg%2Bxml%2C%253Csvg+xmlns%3D'http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg'+viewBox%3D'0+0+512+512'%253E%253Crect+width%3D'512'+height%3D'512'+rx%3D'114'+fill%3D'%2523080A0D'%2F%253E%253Ctext+x%3D'256'+y%3D'340'+font-family%3D'Georgia%2Cserif'+font-size%3D'260'+font-weight%3D'700'+fill%3D'%252300C8FF'+text-anchor%3D'middle'%253ES%253C%2Ftext%253E%253Ccircle+cx%3D'400'+cx%3D'400'+cy%3D'130'+r%3D'50'+fill%3D'%252300E676'%2F%253E%253C%2Fsvg%253E%22%2C%22sizes%22%3A%22512x512%22%2C%22type%22%3A%22image%2Fsvg%2Bxml%22%7D%5D%7D">
-<title>SIGNAL v34 — Predictive Intelligence</title>
+<link rel="manifest" href="data:application/json,%7B%22name%22%3A%22SIGNAL+v48+%E2%80%94+Unified+Prediction+Engine%22%2C%22short_name%22%3A%22SIGNAL%22%2C%22description%22%3A%22Narrative+momentum+platform+for+M20+portfolio+signals%22%2C%22start_url%22%3A%22.%2F%22%2C%22display%22%3A%22standalone%22%2C%22background_color%22%3A%22%23080A0D%22%2C%22theme_color%22%3A%22%23080A0D%22%2C%22orientation%22%3A%22portrait-primary%22%2C%22icons%22%3A%5B%7B%22src%22%3A%22data%3Aimage%2Fsvg%2Bxml%2C%253Csvg+xmlns%3D'http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg'+viewBox%3D'0+0+512+512'%253E%253Crect+width%3D'512'+height%3D'512'+rx%3D'114'+fill%3D'%2523080A0D'%2F%253E%253Ctext+x%3D'256'+y%3D'340'+font-family%3D'Georgia%2Cserif'+font-size%3D'260'+font-weight%3D'700'+fill%3D'%252300C8FF'+text-anchor%3D'middle'%253ES%253C%2Ftext%253E%253Ccircle+cx%3D'400'+cy%3D'130'+r%3D'50'+fill%3D'%252300E676'%2F%253E%253C%2Fsvg%253E%22%2C%22sizes%22%3A%22512x512%22%2C%22type%22%3A%22image%2Fsvg%2Bxml%22%7D%5D%7D">
+<title>SIGNAL v48 — Unified Prediction Engine</title>
 <link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;500;600;700;800&family=Instrument+Serif:ital@0;1&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
 <!-- Sentiment: AFINN lexicon via sentiment.js -->
 <!-- Sentiment: try multiple CDN sources with inline fallback -->
@@ -994,7 +994,7 @@ button:focus-visible,a:focus-visible{outline:2px solid var(--acc);outline-offset
 <div class="gate" id="gate">
   <div class="gate-box">
     <div class="gate-eyebrow">Predictive Intelligence Platform</div>
-    <div class="gate-logo">SIGNAL<span class="gate-v">v47</span></div>
+    <div class="gate-logo">SIGNAL<span class="gate-v">v48</span></div>
     <div class="gate-tagline">Narrative Momentum Score · NMI composite · <strong>Velocity-weighted event prediction</strong> · M20 portfolio signal · Self-calibrating Factor Lab</div>
     <div class="gate-sep"></div>
     <div class="gate-label">Gemini API Key <span style="color:rgba(255,255,255,.3);font-weight:400;letter-spacing:0;text-transform:none;">(aistudio.google.com — free)</span></div>
@@ -1824,7 +1824,9 @@ window.SIG={
   report:()=>_PERF.report(),
   data:()=>({marks:_PERF.marks,queueLog:_PERF.queueLog}),
   clear:()=>_PERF.clear(),
-  json:()=>JSON.stringify({marks:_PERF.marks,queue:_PERF.queueLog},null,2)
+  json:()=>JSON.stringify({marks:_PERF.marks,queue:_PERF.queueLog},null,2),
+  predictions:()=>getUnifiedPredictions?.()||[],
+  predictionSummary:()=>{const p=getUnifiedPredictions?.()||[];return {total:p.length,bySource:p.reduce((a,x)=>(a[x.source||'unknown']=(a[x.source||'unknown']||0)+1,a),{}),resolved:p.filter(x=>x.resolved).length};}
 };
 
 
@@ -1848,6 +1850,41 @@ function labSet(k,v){
   }
 }
 function labSet_raw(k,v){try{localStorage.setItem(k,v);}catch{}}
+
+// ═══════════════════════════════════════════════════════════
+// UNIFIED PREDICTION STORE — single source of truth
+// Canonical storage key: localStorage.lab_predictions via labGet('predictions')
+// Sources: generated forecasts, auto trend forecasts, Polymarket tracks.
+// Legacy sig_forecasts_v1 is migrated into lab_predictions.
+// ═══════════════════════════════════════════════════════════
+const _PRED_SCHEMA_VERSION=2;
+function _predictionTitle(p){return p.question||p.event||p.prediction||'';}
+function _predictionConfidence(p){const v=p.confidence??p.yesProb??p.pmProbability??null;return v==null?null:Math.round(Math.max(0,Math.min(100,Number(v))));}
+function _predictionTs(p){return p.ts||p.generatedAt||p.createdAt||new Date().toISOString();}
+function _normPrediction(raw,source='manual'){
+  const title=_predictionTitle(raw),ts=_predictionTs(raw);
+  const id=raw.id||raw.predictionId||raw.marketId||('pred_'+Date.now()+'_'+Math.random().toString(36).slice(2,7));
+  const conf=_predictionConfidence(raw);
+  return {...raw,schemaVersion:_PRED_SCHEMA_VERSION,id,source:raw.source||source,question:title,event:raw.event||title,confidence:conf,
+    yesProb:raw.yesProb??((raw.source||source)==='polymarket'?conf:raw.yesProb),
+    ts:typeof ts==='number'?new Date(ts).toISOString():ts,generatedAt:raw.generatedAt||(typeof ts==='number'?new Date(ts).toISOString():ts),
+    resolutionDate:raw.resolutionDate||raw.endDate||null,resolved:!!raw.resolved,correct:raw.correct==null?null:!!raw.correct,
+    actualOutcome:raw.actualOutcome||raw.actual||raw.outcome||null,topic:raw.topic||currentTopic};
+}
+function _predKey(p){if(p.marketId)return'pm:'+p.marketId;const title=(_predictionTitle(p)||'').toLowerCase().replace(/\s+/g,' ').trim();const day=(p.ts||p.generatedAt||'').slice(0,10);return(p.source||'manual')+':'+day+':'+title.slice(0,120);}
+function getUnifiedPredictions(){
+  let preds=labGet('predictions').map(p=>_normPrediction(p,p.source||'legacy_lab'));
+  try{const legacy=JSON.parse(localStorage.getItem('sig_forecasts_v1')||'[]');
+    if(Array.isArray(legacy)&&legacy.length){const seen=new Set(preds.map(_predKey));legacy.forEach(f=>{const n=_normPrediction({...f,source:f.source||'generate'},'generate');const k=_predKey(n);if(!seen.has(k)){preds.push(n);seen.add(k);}});labSet('predictions',preds.slice(-300));}
+  }catch(e){console.warn('[predictions] legacy migration skipped:',e.message);}return preds;
+}
+function saveUnifiedPredictions(preds){const seen=new Map();preds.map(p=>_normPrediction(p,p.source||'manual')).forEach(p=>{const k=_predKey(p);seen.set(k,{...(seen.get(k)||{}),...p});});labSet('predictions',Array.from(seen.values()).slice(-300));}
+function upsertUnifiedPrediction(raw,source='manual'){const next=_normPrediction(raw,source);const preds=getUnifiedPredictions();const k=_predKey(next);const i=preds.findIndex(p=>_predKey(p)===k||String(p.id)===String(next.id));if(i>=0)preds[i]={...preds[i],...next};else preds.push(next);saveUnifiedPredictions(preds);return next;}
+function upsertUnifiedPredictions(items,source='manual'){items.forEach(x=>upsertUnifiedPrediction(x,source));return items;}
+function resolveUnifiedPrediction(id,correct,actual=''){const preds=getUnifiedPredictions();const p=preds.find(x=>String(x.id)===String(id)||String(x.marketId)===String(id));if(!p)return null;p.resolved=true;p.correct=!!correct;p.actualOutcome=actual||p.actualOutcome||'';p.outcome=p.actualOutcome;p.resolvedAt=new Date().toISOString();p.resolvedTs=p.resolvedAt;saveUnifiedPredictions(preds);return p;}
+function getForecastLog(){return getUnifiedPredictions().filter(p=>['generate','auto','manual','legacy_lab'].includes(p.source)||(!p.marketId&&p.confidence!=null));}
+function saveForecastLog(log){upsertUnifiedPredictions(log,'generate');}
+
 
 // SignalCapture — saved every refresh
 function saveCapture(stories,nmsMap){
@@ -1949,29 +1986,16 @@ function initPriceOutcomes(captureId){
 
 // Prediction — tracked Polymarket markets
 function trackPrediction(market){
-  const preds=labGet('predictions');
-  if(preds.find(p=>p.marketId===market.id))return;
-  preds.push({
-    id:Date.now(),marketId:market.id,
-    question:market.question,
-    yesProb:pmProb(market),
-    volume:market.volume24hr||0,
-    ts:new Date().toISOString(),
-    resolutionDate:market.endDate||null,
-    resolved:false,correct:null,actualOutcome:null,
-    topic:currentTopic
-  });
-  labSet('predictions',preds);
+  if(getUnifiedPredictions().find(p=>p.marketId===market.id))return;
+  upsertUnifiedPrediction({id:'pm_'+(market.id||Date.now()),source:'polymarket',marketId:market.id,question:market.question,event:market.question,yesProb:pmProb(market),confidence:pmProb(market),volume:market.volume24hr||0,ts:new Date().toISOString(),resolutionDate:market.endDate||null,resolved:false,correct:null,actualOutcome:null,topic:currentTopic},'polymarket');
   toast('Prediction tracked: '+market.question.slice(0,50)+'…','success',2500);
   renderLabData();
 }
 
 function resolvePrediction(id,correct,actual){
-  const preds=labGet('predictions');
-  const p=preds.find(x=>x.id===id);
-  if(p){p.resolved=true;p.correct=correct;p.actualOutcome=actual;p.resolvedTs=new Date().toISOString();}
-  labSet('predictions',preds);
+  resolveUnifiedPrediction(id,correct,actual||'');
   renderLabData();
+  if(typeof renderForecastLog==='function')renderForecastLog();
   toast(correct?'Prediction correct! +1 accuracy':'Prediction wrong. Logged.',correct?'success':'warning',2500);
 }
 
@@ -5421,11 +5445,9 @@ Return ONLY valid JSON array, no markdown:
       resolved:false,correct:null,actual:null
     }));
 
-    // Merge with existing predictions
-    const allPreds=labGet('predictions');
-    results.forEach(r=>{allPreds.push(r);});
-    if(allPreds.length>200)allPreds.splice(0,allPreds.length-200);
-    labSet('predictions',allPreds);
+    // Merge with unified prediction store
+    results.forEach(r=>{r.source='auto';r.event=r.question;});
+    upsertUnifiedPredictions(results,'auto');
 
     // Save separately for quick access
     try{localStorage.setItem(_AUTO_PRED_KEY,JSON.stringify({ts:Date.now(),preds:results}));}catch{}
@@ -6149,7 +6171,7 @@ async function renderPolymarket(){
   try{
     const data=await fetchPolymarkets(20);
     polymarkets=data;
-    const trackedIds=new Set(labGet('predictions').map(p=>p.marketId));
+    const trackedIds=new Set(getUnifiedPredictions().map(p=>p.marketId).filter(Boolean));
     // Category filter chips
     const cats=[...new Set(data.map(m=>m.category||'Other'))].slice(0,8);
     document.getElementById('pmFilter').innerHTML=['All',...cats].map(c=>`
@@ -6192,7 +6214,7 @@ async function renderPolymarket(){
 function filterPM(cat,btn){
   document.querySelectorAll('#pmFilter .tp').forEach(b=>b.classList.remove('on'));
   btn.classList.add('on');
-  const trackedIds=new Set(labGet('predictions').map(p=>p.marketId));
+  const trackedIds=new Set(getUnifiedPredictions().map(p=>p.marketId).filter(Boolean));
   const filtered=cat==='All'?polymarkets:polymarkets.filter(m=>(m.category||'Other')===cat);
   renderPMCards(filtered,trackedIds);
 }
@@ -6229,12 +6251,14 @@ function handleTrackById(mid,btn){
   if(m)handleTrack(m,btn);
 }
 function openResolveById(mid){openResolve(mid);}
+function openResolvePred(id){
+  const correct=confirm('Did the predicted YES/event outcome happen? OK = YES/CORRECT, Cancel = NO/WRONG');
+  const actual=prompt('What actually happened? (brief description)')||'';
+  resolvePrediction(id,correct,actual);
+}
 function openResolve(marketId){
-  const correct=confirm('Did the YES outcome happen? OK = YES (correct), Cancel = NO (wrong)');
-  const actual=prompt('What actually happened? (brief description)');
-  const preds=labGet('predictions');
-  const p=preds.find(x=>x.marketId===marketId);
-  if(p)resolvePrediction(p.id,correct,actual||'');
+  const p=getUnifiedPredictions().find(x=>String(x.marketId)===String(marketId)||String(x.id)===String(marketId));
+  if(p)openResolvePred(p.id);
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -6430,7 +6454,7 @@ document.getElementById('m20Side').innerHTML=ranked.map(it=>{
 // FACTOR LAB
 // ═══════════════════════════════════════════════════════════
 function renderLabData(){
-  const preds=labGet('predictions');
+  const preds=getUnifiedPredictions();
   const outcomes=labGet('outcomes');
   const captures=labGet('captures');
 
@@ -6494,13 +6518,13 @@ function renderLabData(){
   document.getElementById('predCount').textContent=preds.length+' total';
   document.getElementById('predLog').innerHTML=preds.length?preds.slice().reverse().slice(0,20).map(p=>`
     <div class="pred-item">
-      <div class="pred-q">${esc(p.question)}</div>
+      <div class="pred-q">${esc(p.question||p.event)}</div>
       <div class="pred-meta">
-        <span class="pred-conf t-purple">${p.yesProb??p.confidence??'—'}% ${p.yesProb!=null?'YES':'conf'}</span>
+        <span class="pred-conf t-purple">${p.yesProb??p.confidence??'—'}% ${p.marketId?'YES':'conf'}</span>
         <span class="pred-status ${p.resolved?(p.correct?'ps-correct':'ps-wrong'):'ps-pending'}">${p.resolved?(p.correct?'✓ Correct':'✕ Wrong'):'Pending'}</span>
         <span class="t-t3">${new Date(p.ts).toLocaleDateString()}</span>
         ${p.resolutionDate?`<span class="t-t3">Closes ${new Date(p.resolutionDate).toLocaleDateString()}</span>`:''}
-        ${!p.resolved?`<button class="resolve-btn" data-mid="${esc(p.marketId)}" onclick="openResolve(this.dataset.mid)">Resolve</button>`:''}
+        ${!p.resolved?`<button class="resolve-btn" data-pid="${esc(p.id)}" onclick="openResolvePred(this.dataset.pid)">Resolve</button>`:''}
         <button class="resolve-btn" onclick="openArcByPredId(${p.id})" style="color:var(--acc);border-color:rgba(0,200,255,.3);">◌ Arc</button>
       </div>
       ${p.resolved&&p.actualOutcome?`<div class="txt-10 t-t3">Outcome: ${esc(p.actualOutcome)}</div>`:''}
@@ -8109,10 +8133,7 @@ function getClusterNmsTrend(cluster){
 // ═══════════════════════════════════════════════════════════
 // EVENT PREDICTION ENGINE
 // ═══════════════════════════════════════════════════════════
-const _FC_KEY='sig_forecasts_v1';
-
-function getForecastLog(){try{return JSON.parse(localStorage.getItem(_FC_KEY)||'[]');}catch{return[];}}
-function saveForecastLog(log){try{localStorage.setItem(_FC_KEY,JSON.stringify(log.slice(-100)));}catch{}}
+const _FC_KEY='sig_forecasts_v1'; // legacy key; migrated into lab_predictions by unified store
 
 
 // ── SUPERFORECASTER CALIBRATION ──────────────────────────
@@ -8297,8 +8318,10 @@ Be specific: "Fed cuts 25bp in May 2026" not "Fed may cut rates".`,
       return {
       ...f,
         ...f,
-        id:Date.now()+Math.random(),
-        ts:Date.now(),
+        id:'gen_'+Date.now()+'_'+Math.random().toString(36).slice(2,7),
+        source:'generate',
+        question:f.event,
+        ts:new Date().toISOString(),
         generatedAt:new Date().toISOString(),
         resolved:false,correct:null,outcome:null,
         snapshotNms:Math.round((stories[0]?._nms||0.5)*100),
@@ -8309,7 +8332,7 @@ Be specific: "Fed cuts 25bp in May 2026" not "Fed may cut rates".`,
       };
     });
     log.push(...newForecasts);
-    saveForecastLog(log);try{const _lp=JSON.parse(localStorage.getItem("lab_predictions")||"[]");newForecasts.forEach(f=>{_lp.push({id:"auto_"+Date.now()+"_"+Math.random().toString(36).slice(2),ts:new Date().toISOString(),question:f.event,confidence:f.confidence,horizon:f.horizon,isAuto:true,resolved:false,correct:null});});localStorage.setItem("lab_predictions",JSON.stringify(_lp.slice(-100)));}catch(e){}
+    saveForecastLog(log);
     renderEventPredictions(newForecasts);
     setTabDot('predictions','loaded');
   }catch(e){
@@ -8364,13 +8387,10 @@ function renderEventPredictions(forecasts){
 }
 
 function resolveForecast(id,correct){
-  const log=getForecastLog();
-  const f=log.find(x=>String(x.id)===String(id));
+  const f=resolveUnifiedPrediction(id,correct,'');
   if(f){
-    f.resolved=true;f.correct=correct;
-    f.resolvedAt=new Date().toISOString();
-    saveForecastLog(log);try{const _lp=JSON.parse(localStorage.getItem("lab_predictions")||"[]");newForecasts.forEach(f=>{_lp.push({id:"auto_"+Date.now()+"_"+Math.random().toString(36).slice(2),ts:new Date().toISOString(),question:f.event,confidence:f.confidence,horizon:f.horizon,isAuto:true,resolved:false,correct:null});});localStorage.setItem("lab_predictions",JSON.stringify(_lp.slice(-100)));}catch(e){}
     renderForecastLog();
+    renderLabData();
     toast(correct?'Forecast correct! Logged.':'Forecast wrong. Logged.',correct?'success':'warning',2500);
   }
 }
@@ -8397,7 +8417,7 @@ function renderForecastLog(){
     const statusColor=f.resolved?(f.correct?'var(--green)':'var(--red)'):'var(--t3)';
     return`<div class="forecast-log-item">
       <span class="fli-status" style="color:${statusColor};">${status}</span>
-      <span class="fli-event">${esc(f.event)} <span class="t-t3">· ${f.horizon}</span></span>
+      <span class="fli-event">${esc(f.event||f.question)} <span class="t-t3">· ${esc(f.horizon||'—')}</span></span>
       <span class="fli-conf">${f.confidence}%</span>
     </div>`;
   }).join('');
