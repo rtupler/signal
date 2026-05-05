@@ -994,7 +994,7 @@ button:focus-visible,a:focus-visible{outline:2px solid var(--acc);outline-offset
 <div class="gate" id="gate">
   <div class="gate-box">
     <div class="gate-eyebrow">Predictive Intelligence Platform</div>
-    <div class="gate-logo">SIGNAL<span class="gate-v">v43</span></div>
+    <div class="gate-logo">SIGNAL<span class="gate-v">v44</span></div>
     <div class="gate-tagline">Narrative Momentum Score · NMI composite · <strong>Velocity-weighted event prediction</strong> · M20 portfolio signal · Self-calibrating Factor Lab</div>
     <div class="gate-sep"></div>
     <div class="gate-label">Gemini API Key <span style="color:rgba(255,255,255,.3);font-weight:400;letter-spacing:0;text-transform:none;">(aistudio.google.com — free)</span></div>
@@ -8238,19 +8238,24 @@ async function generateEventPredictions(force=false){
     `[${c.domains.join('/')}] ${c.title} (NMS=${Math.round(c.avgNms*100)}, ${c.trajectory}, ${c.stories.length} stories)`
   ).join('; ');
 
+  const currentHeadlines=(_sweepStories.length?_sweepStories:stories)
+    .slice(0,10).map(s=>`"${s.headline}"`).join('\n');
+
   const today=new Date().toLocaleDateString('en-US',{month:'long',day:'numeric',year:'numeric'});
 
   try{
     const raw=await gemini(
 `You are a superforecaster. Today is ${today}.
 
+Current headlines:\n${currentHeadlines||'none'}
+
 Narrative clusters forming: ${clusterContext||'none'}
 High-NMS stories: ${nmsLeaders||'none'}
 Prediction markets: ${pmContext||'none'}
 Current regime: ${regime}
 
-Based on these signals, generate 5 probabilistic event predictions.
-Each prediction must be SPECIFIC and VERIFIABLE (not vague).
+Based ONLY on the above signals, generate 5 probabilistic event predictions directly grounded in these specific stories and headlines.
+Each prediction must be SPECIFIC, VERIFIABLE, and derived from the actual headlines above — not general knowledge.
 
 Return JSON array:
 [{
@@ -8293,6 +8298,7 @@ Be specific: "Fed cuts 25bp in May 2026" not "Fed may cut rates".`,
       ...f,
         ...f,
         id:Date.now()+Math.random(),
+        ts:Date.now(),
         generatedAt:new Date().toISOString(),
         resolved:false,correct:null,outcome:null,
         snapshotNms:Math.round((stories[0]?._nms||0.5)*100),
