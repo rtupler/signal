@@ -994,7 +994,7 @@ button:focus-visible,a:focus-visible{outline:2px solid var(--acc);outline-offset
 <div class="gate" id="gate">
   <div class="gate-box">
     <div class="gate-eyebrow">Predictive Intelligence Platform</div>
-    <div class="gate-logo">SIGNAL<span class="gate-v">v45</span></div>
+    <div class="gate-logo">SIGNAL<span class="gate-v">v46</span></div>
     <div class="gate-tagline">Narrative Momentum Score · NMI composite · <strong>Velocity-weighted event prediction</strong> · M20 portfolio signal · Self-calibrating Factor Lab</div>
     <div class="gate-sep"></div>
     <div class="gate-label">Gemini API Key <span style="color:rgba(255,255,255,.3);font-weight:400;letter-spacing:0;text-transform:none;">(aistudio.google.com — free)</span></div>
@@ -1687,7 +1687,8 @@ function enrichSentiments(stories){
 // Next:    gemini-3.1-flash-lite-preview (primary), gemini-2.5-flash (fallback until GA)
 const MODEL_PRIMARY='gemini-2.5-flash-lite';
 const MODEL_FALLBACK='gemini-2.5-flash';
-const MODELS=[MODEL_PRIMARY,MODEL_FALLBACK];
+const MODEL_FALLBACK2='gemini-1.5-flash';
+const MODELS=[MODEL_PRIMARY,MODEL_FALLBACK,MODEL_FALLBACK2];
 const GEMINI='https://generativelanguage.googleapis.com/v1beta/models';
 const PM_API='https://gamma-api.polymarket.com';
 const YAHOO='https://query1.finance.yahoo.com/v8/finance/chart';
@@ -3680,11 +3681,11 @@ async function _doFetch(model,prompt,sys,search,maxTok=2500,jsonMode=true){
       clearTimeout(tid);
       throw fetchErr; // AbortError (timeout) or network error — don't retry
     }
-    if(r.status===429){
+    if(r.status===429||r.status===503){
       if(attempt<MAX_RETRIES-1){
         // Exponential backoff: 1s, 2s, 4s + up to 500ms jitter
         const delay=Math.pow(2,attempt)*1000+Math.random()*500;
-        console.warn(`[SIGNAL] 429 on ${model} (attempt ${attempt+1}), retrying in ${Math.round(delay)}ms`);
+        console.warn(`[SIGNAL] ${r.status} on ${model} (attempt ${attempt+1}), retrying in ${Math.round(delay)}ms`);
         await new Promise(res=>setTimeout(res,delay));
         continue;
       }
@@ -8255,7 +8256,7 @@ High-NMS stories: ${nmsLeaders||'none'}
 Prediction markets: ${pmContext||'none'}
 Current regime: ${regime}
 
-Based ONLY on the above signals, generate 5 probabilistic event predictions directly grounded in these specific stories and headlines. Do not generate predictions about topics not present in the headlines above.
+Based ONLY on the above signals, generate 5 probabilistic event predictions directly grounded in these specific stories. Do not generate predictions about topics not present in the headlines above.
 
 Return JSON array:
 [{
