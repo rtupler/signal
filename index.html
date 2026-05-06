@@ -10,8 +10,8 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="SIGNAL">
 <link rel="apple-touch-icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 180 180'%3E%3Crect width='180' height='180' rx='40' fill='%23080A0D'/%3E%3Ctext x='90' y='115' font-family='Georgia,serif' font-size='68' font-weight='700' fill='%2300C8FF' text-anchor='middle'%3ES%3C/text%3E%3Ccircle cx='138' cy='45' r='12' fill='%2300E676'/%3E%3C/svg%3E">
-<link rel="manifest" href="data:application/json,%7B%22name%22%3A%22SIGNAL+v48+%E2%80%94+Unified+Prediction+Engine%22%2C%22short_name%22%3A%22SIGNAL%22%2C%22description%22%3A%22Narrative+momentum+platform+for+M20+portfolio+signals%22%2C%22start_url%22%3A%22.%2F%22%2C%22display%22%3A%22standalone%22%2C%22background_color%22%3A%22%23080A0D%22%2C%22theme_color%22%3A%22%23080A0D%22%2C%22orientation%22%3A%22portrait-primary%22%2C%22icons%22%3A%5B%7B%22src%22%3A%22data%3Aimage%2Fsvg%2Bxml%2C%253Csvg+xmlns%3D'http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg'+viewBox%3D'0+0+512+512'%253E%253Crect+width%3D'512'+height%3D'512'+rx%3D'114'+fill%3D'%2523080A0D'%2F%253E%253Ctext+x%3D'256'+y%3D'340'+font-family%3D'Georgia%2Cserif'+font-size%3D'260'+font-weight%3D'700'+fill%3D'%252300C8FF'+text-anchor%3D'middle'%253ES%253C%2Ftext%253E%253Ccircle+cx%3D'400'+cy%3D'130'+r%3D'50'+fill%3D'%252300E676'%2F%253E%253C%2Fsvg%253E%22%2C%22sizes%22%3A%22512x512%22%2C%22type%22%3A%22image%2Fsvg%2Bxml%22%7D%5D%7D">
-<title>SIGNAL v48 — Unified Prediction Engine</title>
+<link rel="manifest" href="data:application/json,%7B%22name%22%3A%22SIGNAL+v65+%E2%80%94+Predictive+Intelligence%22%2C%22short_name%22%3A%22SIGNAL%22%2C%22description%22%3A%22Narrative+momentum+platform+for+M20+portfolio+signals%22%2C%22start_url%22%3A%22.%2F%22%2C%22display%22%3A%22standalone%22%2C%22background_color%22%3A%22%23080A0D%22%2C%22theme_color%22%3A%22%23080A0D%22%2C%22orientation%22%3A%22portrait-primary%22%2C%22icons%22%3A%5B%7B%22src%22%3A%22data%3Aimage%2Fsvg%2Bxml%2C%253Csvg+xmlns%3D'http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg'+viewBox%3D'0+0+512+512'%253E%253Crect+width%3D'512'+height%3D'512'+rx%3D'114'+fill%3D'%2523080A0D'%2F%253E%253Ctext+x%3D'256'+y%3D'340'+font-family%3D'Georgia%2Cserif'+font-size%3D'260'+font-weight%3D'700'+fill%3D'%252300C8FF'+text-anchor%3D'middle'%253ES%253C%2Ftext%253E%253Ccircle+cx%3D'400'+cy%3D'130'+r%3D'50'+fill%3D'%252300E676'%2F%253E%253C%2Fsvg%253E%22%2C%22sizes%22%3A%22512x512%22%2C%22type%22%3A%22image%2Fsvg%2Bxml%22%7D%5D%7D">
+<title>SIGNAL v65 — Predictive Intelligence</title>
 <link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;500;600;700;800&family=Instrument+Serif:ital@0;1&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
 <!-- Sentiment: AFINN lexicon via sentiment.js -->
 <!-- Sentiment: try multiple CDN sources with inline fallback -->
@@ -32,6 +32,21 @@ function _getProxyBase(){
   if(isLocal)return _PROXY_BASE;
   return null; // no proxy configured — will try direct fetch
 }
+
+// ── In-flight request deduplication ──────────────────────────
+// Prevents multiple panes from firing duplicate requests to same endpoint.
+// Same URL within 100ms shares one promise. Prevents quota spikes + race conditions.
+const _INFLIGHT=new Map();
+async function _deduplicatedFetch(key,fetchFn){
+  if(_INFLIGHT.has(key)){
+    return _INFLIGHT.get(key); // return existing in-flight promise
+  }
+  const promise=fetchFn().finally(()=>{
+    setTimeout(()=>_INFLIGHT.delete(key),100); // clear after 100ms grace
+  });
+  _INFLIGHT.set(key,promise);
+  return promise;
+}
 async function proxyFetch(url,opts={}){
   const proxyBase=_getProxyBase();
   if(proxyBase){
@@ -41,9 +56,18 @@ async function proxyFetch(url,opts={}){
       const r=await fetch(proxyBase+encodeURIComponent(url),{signal:controller.signal,...opts});
       clearTimeout(tid);
       if(r.ok)return r;
+      console.warn('[proxy] non-ok response:',r.status,'for',url.slice(0,60));
     }catch(e){console.warn('[proxy] failed:',e.message);}
   }
-  return fetch(url,opts); // direct fallback
+  // Direct fallback — explicit, not silent
+  try{
+    const r=await fetch(url,opts);
+    if(!r.ok)console.warn('[direct fetch] non-ok:',r.status,url.slice(0,60));
+    return r;
+  }catch(e){
+    console.warn('[direct fetch failed]',url.slice(0,60),e.message);
+    throw new Error('Proxy unavailable and direct fetch failed: '+e.message);
+  }
 }
 
 // Minimal AFINN-based sentiment — inline fallback if CDN fails
@@ -994,7 +1018,7 @@ button:focus-visible,a:focus-visible{outline:2px solid var(--acc);outline-offset
 <div class="gate" id="gate">
   <div class="gate-box">
     <div class="gate-eyebrow">Predictive Intelligence Platform</div>
-    <div class="gate-logo">SIGNAL<span class="gate-v">v55</span></div>
+    <div class="gate-logo">SIGNAL<span class="gate-v">v65</span></div>
     <div class="gate-tagline">Narrative Momentum Score · NMI composite · <strong>Velocity-weighted event prediction</strong> · KL-edge calibration · Self-calibrating Factor Lab</div>
     <div class="gate-sep"></div>
     <div class="gate-label">Gemini API Key <span style="color:rgba(255,255,255,.3);font-weight:400;letter-spacing:0;text-transform:none;">(aistudio.google.com — free)</span></div>
@@ -1353,10 +1377,34 @@ button:focus-visible,a:focus-visible{outline:2px solid var(--acc);outline-offset
         <div id="sourceReliabilityDisplay"><div class="empty" style="padding:.5rem;font-size:10px;">Resolve predictions to build source track record</div></div>
       </div>
 
+      <!-- CATEGORY BIAS -->
+      <div class="lab-card mb-5">
+        <div class="lab-hd">Category Accuracy <span class="lab-hd-act" style="font-weight:400;font-size:9px;">confidence vs actual hit rate by type</span></div>
+        <div id="categoryBiasDisplay"><div class="empty" style="padding:.5rem;font-size:10px;">Resolve predictions to see category calibration</div></div>
+      </div>
+
+      <!-- VERSION PERFORMANCE -->
+      <div class="lab-card mb-5">
+        <div class="lab-hd">Version Performance <span class="lab-hd-act" style="font-weight:400;font-size:9px;">accuracy by model version</span></div>
+        <div id="versionPerfDisplay"><div class="empty" style="padding:.5rem;font-size:10px;">Resolve predictions to compare versions</div></div>
+      </div>
+
+      <!-- FACTOR ATTRIBUTION -->
+      <div class="lab-card mb-5">
+        <div class="lab-hd">Factor Attribution <span class="lab-hd-act" style="font-weight:400;font-size:9px;">which signals predict correct outcomes</span></div>
+        <div id="factorAttributionDisplay"><div class="empty" style="padding:.5rem;font-size:10px;">Resolve predictions to see factor impact</div></div>
+      </div>
+
       <!-- CALIBRATION BY TYPE -->
       <div class="lab-card mb-5">
         <div class="lab-hd">Prediction Types <span class="lab-hd-act" style="font-weight:400;font-size:9px;">distribution by category</span></div>
         <div id="predTypeDisplay"><div class="empty" style="padding:.5rem;font-size:10px;">Loading…</div></div>
+      </div>
+
+      <!-- DAILY FORECAST REVIEW -->
+      <div class="lab-card mb-5" id="dailyReviewCard">
+        <div class="lab-hd">Daily Forecast Review <span class="lab-hd-act" style="font-weight:400;font-size:9px;" id="dailyReviewDate"></span></div>
+        <div id="dailyReviewDisplay"><div class="empty" style="padding:.5rem;font-size:10px;">Loading review…</div></div>
       </div>
 
       <!-- PREDICTIONS LOG -->
@@ -1855,10 +1903,47 @@ window.SIGNAL_STORE={
 };
 
 // Load store from localStorage on init
+// ── SIGNAL.saveStore / loadStore ───────────────────────────────
+// Canonical persistence — nothing writes predictions directly to
+// localStorage except through these two functions.
+function _saveStore(){
+  try{
+    // Predictions go through unified store layer
+    saveUnifiedPredictions(SIGNAL_STORE.predictions);
+    // Calibration and source reliability persisted separately
+    localStorage.setItem('sig_calibration_v1',JSON.stringify(SIGNAL_STORE.calibration));
+    localStorage.setItem('sig_source_reliability_v1',JSON.stringify(SIGNAL_STORE.sourceReliability));
+    // Immutable append-only history — never overwrite, only append
+    try{
+      const existingHistory=JSON.parse(localStorage.getItem('sig_history_v1')||'[]');
+      const existingIds=new Set(existingHistory.map(h=>h.id+':'+h.resolvedAt));
+      const newEntries=SIGNAL_STORE.history.filter(h=>!existingIds.has(h.id+':'+h.resolvedAt));
+      if(newEntries.length){
+        const merged=[...existingHistory,...newEntries].slice(-500); // cap at 500
+        localStorage.setItem('sig_history_v1',JSON.stringify(merged));
+      }
+    }catch{}
+    localStorage.setItem('sig_store_meta_v1',JSON.stringify({savedAt:new Date().toISOString(),predCount:SIGNAL_STORE.predictions.length,historyCount:SIGNAL_STORE.history.length}));
+  }catch(e){console.warn('[saveStore] failed:',e.message);}
+}
+
 function _loadStore(){
   try{
     SIGNAL_STORE.predictions=getUnifiedPredictions();
-    // Rebuild calibration from resolved predictions
+    // Load persisted calibration if available (faster than rebuilding)
+    try{
+      const cal=JSON.parse(localStorage.getItem('sig_calibration_v1')||'{}');
+      if(Object.keys(cal).length)SIGNAL_STORE.calibration={...SIGNAL_STORE.calibration,...cal};
+      const sr=JSON.parse(localStorage.getItem('sig_source_reliability_v1')||'{}');
+      if(Object.keys(sr).length)SIGNAL_STORE.sourceReliability=sr;
+      // Load immutable history
+      const hist=JSON.parse(localStorage.getItem('sig_history_v1')||'[]');
+      if(hist.length)SIGNAL_STORE.history=hist;
+    }catch{}
+    // Rebuild calibration from resolved predictions (always — ensures consistency)
+    // Reset first to prevent double-counting on reload
+    SIGNAL_STORE.calibration={b50:{correct:0,total:0},b60:{correct:0,total:0},b70:{correct:0,total:0},b80:{correct:0,total:0},b90:{correct:0,total:0}};
+    SIGNAL_STORE.sourceReliability={};
     SIGNAL_STORE.predictions.filter(p=>p.resolved&&p.correct!=null).forEach(p=>{
       const conf=p.yesProb??p.confidence??50;
       const bucket='b'+Math.round(conf/10)*10;
@@ -1869,11 +1954,36 @@ function _loadStore(){
       if(p.correct)SIGNAL_STORE.calibration[b].correct++;
       // Source reliability
       const src=p.source||'unknown';
-      if(!SIGNAL_STORE.sourceReliability[src])SIGNAL_STORE.sourceReliability[src]={correct:0,total:0,brier:0};
+      if(!SIGNAL_STORE.sourceReliability[src])SIGNAL_STORE.sourceReliability[src]={correct:0,total:0,brierSum:0,avgBrier:null};
       SIGNAL_STORE.sourceReliability[src].total++;
       if(p.correct)SIGNAL_STORE.sourceReliability[src].correct++;
     });
   }catch(e){console.warn('[SIGNAL_STORE] load failed:',e.message);}
+}
+
+// ── Confidence Decay — auto-expire predictions past resolveBy ──
+// Runs at boot and on each load. Marks expired predictions as
+// 'expired' status so they don't pollute active prediction counts.
+function _applyConfidenceDecay(){
+  const now=Date.now();
+  let changed=false;
+  SIGNAL_STORE.predictions.forEach(p=>{
+    if(p.resolved||p.status==='expired')return;
+    if(!p.resolveBy)return;
+    const resolveTs=new Date(p.resolveBy).getTime();
+    if(isNaN(resolveTs))return;
+    // Grace period: 7 days past resolveBy before marking expired
+    if(now>resolveTs+7*86400000){
+      p.status='expired';
+      p.expiredAt=new Date().toISOString();
+      changed=true;
+      console.log(`[decay] expired: ${(p.question||'').slice(0,50)}`);
+    }
+  });
+  if(changed){
+    saveUnifiedPredictions(SIGNAL_STORE.predictions);
+    console.log('[decay] predictions updated');
+  }
 }
 
 // ── 1. addPrediction ────────────────────────────────────────────
@@ -1915,7 +2025,22 @@ function addPrediction(raw,source='manual'){
     fusedProb:raw.fusedProb||null,
     narrativeEntropy:raw.narrativeEntropy||null,
     surpriseZ:raw.surpriseZ||null,
-    schemaVersion:2
+    schemaVersion:2,
+    modelVersion:raw.modelVersion||document.querySelector('.gate-v')?.textContent||'unknown',
+    promptVersion:raw.promptVersion||'forecast_prompt_01',
+    // Snapshot conditions at prediction creation time — used for factor attribution
+    factorsAtCreation:raw.factorsAtCreation||{
+      narrativeMomentum:raw.snapshotNms??Math.round((stories[0]?._nms||0.5)*100),
+      avgNms:raw.snapshotNms??null,
+      regime:raw.snapshotRegime||(typeof regime!=='undefined'?regime:null),
+      divergenceScore:stories.slice(0,5).reduce((a,s)=>a+(s._divScore||0),0)/Math.max(stories.slice(0,5).length,1),
+      sourceCount:stories.length,
+      klBits:raw.klBits||null,
+      kellyScore:raw.kellyScore||null,
+      surpriseZ:raw.surpriseZ||null,
+      marketProb:raw.marketProb||null,
+      capturedAt:new Date().toISOString()
+    }
   };
   // Upsert to unified store (deduplication handled inside)
   const saved=upsertUnifiedPrediction(pred,source);
@@ -1942,11 +2067,29 @@ function resolvePrediction(id,correct,actual=''){
   if(correct)SIGNAL_STORE.calibration[b].correct++;
   // Update source reliability
   const src=saved.source||'unknown';
-  if(!SIGNAL_STORE.sourceReliability[src])SIGNAL_STORE.sourceReliability[src]={correct:0,total:0};
+  if(!SIGNAL_STORE.sourceReliability[src])SIGNAL_STORE.sourceReliability[src]={correct:0,total:0,brierSum:0};
   SIGNAL_STORE.sourceReliability[src].total++;
   if(correct)SIGNAL_STORE.sourceReliability[src].correct++;
+  // Brier score per source
+  const prob2=(saved.yesProb??saved.confidence??50)/100;
+  const brier=Math.pow(prob2-(correct?1:0),2);
+  SIGNAL_STORE.sourceReliability[src].brierSum=(SIGNAL_STORE.sourceReliability[src].brierSum||0)+brier;
+  SIGNAL_STORE.sourceReliability[src].avgBrier=Math.round(SIGNAL_STORE.sourceReliability[src].brierSum/SIGNAL_STORE.sourceReliability[src].total*1000)/1000;
+  // Factor attribution — record which conditions at creation predicted correct outcomes
+  if(saved.factorsAtCreation){
+    if(!SIGNAL_STORE.factorAttribution)SIGNAL_STORE.factorAttribution={};
+    const fa=SIGNAL_STORE.factorAttribution;
+    Object.entries(saved.factorsAtCreation).forEach(([factor,value])=>{
+      if(value==null||typeof value!=='number')return;
+      if(!fa[factor])fa[factor]={correct:0,total:0,sumValue:0};
+      fa[factor].total++;
+      fa[factor].sumValue+=value;
+      if(correct)fa[factor].correct++;
+    });
+  }
   // Append to history for temporal learning
-  SIGNAL_STORE.history.push({id,correct,resolvedAt:new Date().toISOString(),conf,src,type:saved.type||'unknown'});
+  SIGNAL_STORE.history.push({id,correct,brier,resolvedAt:new Date().toISOString(),conf,src,type:saved.type||'unknown',factors:saved.factorsAtCreation||null});
+  _saveStore(); // canonical persistence — only place predictions write to localStorage
   if(typeof renderLabData==='function')renderLabData();
   return saved;
 }
@@ -2022,8 +2165,9 @@ function _extractEntities(text){
   let run=[];
   words.forEach((w,i)=>{
     const clean=w.replace(/[^a-zA-Z]/g,'');
-    if(i>0&&clean.length>=3&&/^[A-Z]/.test(clean)&&!SKIP.has(clean)){
-      run.push(clean);
+    // Stop run on punctuation, conjunctions, or non-capitalized words
+    if(i>0&&clean.length>=3&&/^[A-Z]/.test(clean)&&!SKIP.has(clean)&&!/[,;:.]$/.test(w)){
+      if(run.length<3)run.push(clean); // cap at 3 words
     }else{
       if(run.length>=2)multiWord.push(run.join(' '));
       run=[];
@@ -2047,14 +2191,220 @@ window.SIG=Object.assign(window.SIG||{},{
   sourceReliability:()=>SIGNAL_STORE.sourceReliability,
   scores:()=>SIGNAL_STORE.scores,
   store:()=>SIGNAL_STORE,
+  saveStore:()=>_saveStore(),
+  loadStore:()=>_loadStore(),
+  factorAttribution:()=>SIGNAL_STORE.factorAttribution||{},
   // Canonical 4 functions exposed for console access
   add:(raw,src)=>addPrediction(raw,src),
   resolve:(id,correct,actual)=>resolvePrediction(id,correct,actual),
   score:(pred)=>scorePrediction(pred),
   render:()=>renderPredictions(),
   // Insider detection
-  insiders:()=>detectKalshiInsiders()
+  insiders:()=>detectKalshiInsiders(),
+  // ── SIGNAL.audit() — answers the 7 A-grade questions ──────────
+  audit:()=>{
+    const preds=SIGNAL_STORE.predictions;
+    const resolved=preds.filter(p=>p.resolved&&p.correct!=null);
+    // 1. Calibration — are 70% predictions right ~70% of the time?
+    const calibration={};
+    resolved.forEach(p=>{
+      const conf=p.yesProb??p.confidence??50;
+      const b=String(Math.round(conf/10)*10);
+      if(!calibration[b])calibration[b]={total:0,correct:0,brierSum:0};
+      calibration[b].total++;
+      if(p.correct)calibration[b].correct++;
+      calibration[b].brierSum+=Math.pow(conf/100-(p.correct?1:0),2);
+    });
+    Object.values(calibration).forEach(b=>{b.accuracy=b.total?Math.round(b.correct/b.total*100):null;b.avgBrier=b.total?Math.round(b.brierSum/b.total*1000)/1000:null;});
+    // 2. Source reliability — which sources improve accuracy?
+    const sourceReliability={...SIGNAL_STORE.sourceReliability};
+    // 3. Category bias — which categories are overconfident?
+    const categoryBias={};
+    resolved.forEach(p=>{
+      const cat=p.type||p.category||'general';
+      const conf=p.yesProb??p.confidence??50;
+      if(!categoryBias[cat])categoryBias[cat]={total:0,correct:0,avgConf:0,confSum:0};
+      categoryBias[cat].total++;
+      if(p.correct)categoryBias[cat].correct++;
+      categoryBias[cat].confSum+=conf;
+    });
+    Object.entries(categoryBias).forEach(([cat,v])=>{
+      v.accuracy=Math.round(v.correct/v.total*100);
+      v.avgConf=Math.round(v.confSum/v.total);
+      v.overconfidence=v.avgConf-v.accuracy; // positive = overconfident
+    });
+    // 4. Factor attribution — which narrative factors predict correct outcomes?
+    const factorAttribution={...SIGNAL_STORE.factorAttribution};
+    Object.entries(factorAttribution).forEach(([f,v])=>{
+      if(v.total)v.accuracy=Math.round(v.correct/v.total*100);
+    });
+    // 5. Version performance — did newer versions improve accuracy?
+    const versionPerformance={};
+    resolved.forEach(p=>{
+      const v=p.modelVersion||'unknown';
+      if(!versionPerformance[v])versionPerformance[v]={total:0,correct:0,brierSum:0};
+      versionPerformance[v].total++;
+      if(p.correct)versionPerformance[v].correct++;
+      const conf=(p.yesProb??p.confidence??50)/100;
+      versionPerformance[v].brierSum+=Math.pow(conf-(p.correct?1:0),2);
+    });
+    Object.values(versionPerformance).forEach(v=>{v.accuracy=v.total?Math.round(v.correct/v.total*100):null;v.avgBrier=v.total?Math.round(v.brierSum/v.total*1000)/1000:null;});
+    // 6. Polymarket/Kalshi divergence — did market disagreement help or hurt?
+    const marketDivergence={withMarket:{total:0,correct:0},noMarket:{total:0,correct:0}};
+    resolved.forEach(p=>{
+      const key=p.klBits!=null?'withMarket':'noMarket';
+      marketDivergence[key].total++;
+      if(p.correct)marketDivergence[key].correct++;
+    });
+    ['withMarket','noMarket'].forEach(k=>{const v=marketDivergence[k];v.accuracy=v.total?Math.round(v.correct/v.total*100):null;});
+    // 7. Narrative momentum validation — does high NMS predict outcomes?
+    const nmsValidation={highNms:{total:0,correct:0},lowNms:{total:0,correct:0}};
+    resolved.forEach(p=>{
+      const nms=p.factorsAtCreation?.narrativeMomentum??p.snapshotNms??null;
+      if(nms==null)return;
+      const key=nms>=60?'highNms':'lowNms';
+      nmsValidation[key].total++;
+      if(p.correct)nmsValidation[key].correct++;
+    });
+    ['highNms','lowNms'].forEach(k=>{const v=nmsValidation[k];v.accuracy=v.total?Math.round(v.correct/v.total*100):null;});
+    // Enhanced NMS validation — correlate NMS at creation with actual price returns
+    const outcomes=labGet('outcomes');
+    const withPriceReturns=outcomes.filter(o=>o.r14d!=null&&o.nmsAtCapture!=null&&!o.isControl);
+    const nmsVsPrice={
+      highNmsPredictions:nmsValidation.highNms,
+      lowNmsPredictions:nmsValidation.lowNms,
+      // Price return correlation: does high NMS predict positive returns?
+      priceCorrelation:withPriceReturns.length>=5?{
+        highNmsReturn:withPriceReturns.filter(o=>o.nmsAtCapture>=60).reduce((a,o,_,arr)=>arr.length?a+o.r14d/arr.length:0,0),
+        lowNmsReturn:withPriceReturns.filter(o=>o.nmsAtCapture<60).reduce((a,o,_,arr)=>arr.length?a+o.r14d/arr.length:0,0),
+        sampleSize:withPriceReturns.length,
+        conclusion:null // computed below
+      }:null
+    };
+    if(nmsVsPrice.priceCorrelation){
+      const {highNmsReturn,lowNmsReturn}=nmsVsPrice.priceCorrelation;
+      nmsVsPrice.priceCorrelation.highNmsReturn=Math.round(highNmsReturn*100)/100;
+      nmsVsPrice.priceCorrelation.lowNmsReturn=Math.round(lowNmsReturn*100)/100;
+      const diff=highNmsReturn-lowNmsReturn;
+      nmsVsPrice.priceCorrelation.conclusion=Math.abs(diff)<0.5?'NMS not predictive of returns':diff>0?`High NMS → +${Math.round(diff*100)/100}% excess return vs low NMS`:`Low NMS → +${Math.round(Math.abs(diff)*100)/100}% excess return vs high NMS`;
+    }
+    return{resolvedCount:resolved.length,calibration,sourceReliability,categoryBias,factorAttribution,versionPerformance,marketDivergence,nmsValidation:nmsVsPrice};
+  }
 });
+
+// ── window.SIGNAL — canonical public API ───────────────────────
+// Everything routes through SIGNAL. No exceptions.
+window.SIGNAL={
+  store:SIGNAL_STORE,
+  // ── SIGNAL.commit — single mutation gateway ────────────────
+  // Every mutation goes through commit. Maintains audit log.
+  _commitLog:[],
+  commit(type,payload){
+    const entry={type,payload,ts:new Date().toISOString(),id:'commit_'+Date.now()+'_'+Math.random().toString(36).slice(2,6)};
+    this._commitLog.push(entry);
+    switch(type){
+      case 'ADD_PREDICTION': return addPrediction(payload.raw,payload.source||'manual');
+      case 'RESOLVE_PREDICTION': return resolvePrediction(payload.id,payload.correct,payload.actual||'');
+      case 'SAVE': return _saveStore();
+      case 'LOAD': return _loadStore();
+      case 'DECAY': return _applyConfidenceDecay();
+      default: console.warn('[SIGNAL.commit] unknown type:',type); return null;
+    }
+  },
+  commitLog:()=>window.SIGNAL._commitLog,
+  // Attention vs Predictive Signal analysis
+  attentionVsPredictive:(n=10)=>typeof SIG!=='undefined'&&SIG.attentionVsPredictive?SIG.attentionVsPredictive(n):{hype:[],hidden:[]},
+  // Core engine functions
+  addPrediction:(raw,src)=>addPrediction(raw,src),
+  resolvePrediction:(id,correct,actual)=>resolvePrediction(id,correct,actual),
+  updateCalibration:(p)=>{ // standalone calibration update
+    const conf=p.yesProb??p.confidence??50;
+    const b=conf<55?'b50':conf<65?'b60':conf<75?'b70':conf<85?'b80':'b90';
+    if(!SIGNAL_STORE.calibration[b])SIGNAL_STORE.calibration[b]={correct:0,total:0};
+    SIGNAL_STORE.calibration[b].total++;
+    if(p.correct)SIGNAL_STORE.calibration[b].correct++;
+  },
+  updateSourceReliability:(p)=>{
+    const src=p.source||'unknown';
+    if(!SIGNAL_STORE.sourceReliability[src])SIGNAL_STORE.sourceReliability[src]={correct:0,total:0,brierSum:0};
+    SIGNAL_STORE.sourceReliability[src].total++;
+    if(p.correct)SIGNAL_STORE.sourceReliability[src].correct++;
+  },
+  updateFactorAttribution:(p)=>{
+    if(!p.factorsAtCreation)return;
+    if(!SIGNAL_STORE.factorAttribution)SIGNAL_STORE.factorAttribution={};
+    Object.entries(p.factorsAtCreation).forEach(([f,v])=>{
+      if(v==null||typeof v!=='number')return;
+      if(!SIGNAL_STORE.factorAttribution[f])SIGNAL_STORE.factorAttribution[f]={correct:0,total:0,sumValue:0};
+      SIGNAL_STORE.factorAttribution[f].total++;
+      SIGNAL_STORE.factorAttribution[f].sumValue+=v;
+      if(p.correct)SIGNAL_STORE.factorAttribution[f].correct++;
+    });
+  },
+  audit:()=>window.SIG.audit(),
+  save:()=>_saveStore(),
+  load:()=>_loadStore(),
+  decay:()=>_applyConfidenceDecay(),
+  // Export all prediction history as JSON
+  exportData:()=>{
+    const data={
+      exportedAt:new Date().toISOString(),
+      version:document.querySelector('.gate-v')?.textContent||'unknown',
+      predictions:SIGNAL_STORE.predictions,
+      history:SIGNAL_STORE.history,
+      calibration:SIGNAL_STORE.calibration,
+      sourceReliability:SIGNAL_STORE.sourceReliability,
+      factorAttribution:SIGNAL_STORE.factorAttribution||{},
+      audit:window.SIG.audit()
+    };
+    const blob=new Blob([JSON.stringify(data,null,2)],{type:'application/json'});
+    const a=document.createElement('a');
+    a.href=URL.createObjectURL(blob);
+    a.download=`signal_export_${new Date().toISOString().slice(0,10)}.json`;
+    a.click();
+    return`Exported ${data.predictions.length} predictions + ${data.history.length} history entries`;
+  },
+  // ── SIGNAL.importData — restore from exported JSON ─────────
+  importData:(jsonOrFile)=>{
+    const _doImport=(data)=>{
+      try{
+        if(!data.predictions||!Array.isArray(data.predictions))throw new Error('Invalid export: no predictions array');
+        // Merge predictions — dedup by id
+        const existing=new Map(SIGNAL_STORE.predictions.map(p=>[p.id,p]));
+        let added=0,skipped=0;
+        data.predictions.forEach(p=>{
+          if(!existing.has(p.id)){existing.set(p.id,p);added++;}
+          else skipped++;
+        });
+        SIGNAL_STORE.predictions=[...existing.values()];
+        // Merge history — append-only
+        if(Array.isArray(data.history)){
+          const existingHist=new Set(SIGNAL_STORE.history.map(h=>h.id+':'+h.resolvedAt));
+          data.history.filter(h=>!existingHist.has(h.id+':'+h.resolvedAt)).forEach(h=>SIGNAL_STORE.history.push(h));
+        }
+        // Restore calibration and sources if present
+        if(data.calibration)SIGNAL_STORE.calibration={...SIGNAL_STORE.calibration,...data.calibration};
+        if(data.sourceReliability)SIGNAL_STORE.sourceReliability={...SIGNAL_STORE.sourceReliability,...data.sourceReliability};
+        if(data.factorAttribution)SIGNAL_STORE.factorAttribution={...(SIGNAL_STORE.factorAttribution||{}),...data.factorAttribution};
+        _saveStore();
+        saveUnifiedPredictions(SIGNAL_STORE.predictions);
+        if(typeof renderLabData==='function')renderLabData();
+        return`Imported: ${added} new predictions, ${skipped} already existed. Total: ${SIGNAL_STORE.predictions.length}`;
+      }catch(e){return'Import failed: '+e.message;}
+    };
+    if(typeof jsonOrFile==='string'){
+      try{return _doImport(JSON.parse(jsonOrFile));}catch(e){return'Parse failed: '+e.message;}
+    }else if(jsonOrFile instanceof File){
+      const reader=new FileReader();
+      reader.onload=e=>{const result=_doImport(JSON.parse(e.target.result));console.log('[SIGNAL.importData]',result);if(typeof renderLabData==='function')renderLabData();};
+      reader.readAsText(jsonOrFile);
+      return'Reading file...';
+    }else if(jsonOrFile&&typeof jsonOrFile==='object'){
+      return _doImport(jsonOrFile);
+    }
+    return'Usage: SIGNAL.importData(jsonString | File | parsedObject)';
+  }
+};
 
 
 // ═══════════════════════════════════════════════════════════
@@ -3643,6 +3993,7 @@ function pruneAllStorage(){
 function boot(){
   pruneAllStorage();
   _loadStore(); // initialize SIGNAL_STORE from localStorage
+  _applyConfidenceDecay(); // expire predictions past resolveBy
   // Show cached standing Q answers immediately
   try{
     const sqAnswers=JSON.parse(localStorage.getItem(_SQ_ANSWERS_KEY)||'{}');
@@ -3921,7 +4272,7 @@ async function _doFetch(model,prompt,sys,search,maxTok=2500,jsonMode=true){
   if(search)body.tools=[{googleSearch:{}}];
   // Retry up to 3 times on 429 with exponential backoff + jitter
   // Free tier: ~10 RPM. Paid Tier 1: 2000 RPM. Backoff avoids cascade failures.
-  const MAX_RETRIES=3;
+  const MAX_RETRIES=2; // 2 attempts per model — faster fallback under 503 overload
   for(let attempt=0;attempt<MAX_RETRIES;attempt++){
     const ctrl=new AbortController();
     const tid=setTimeout(()=>ctrl.abort(),8000);
@@ -3948,7 +4299,7 @@ async function _doFetch(model,prompt,sys,search,maxTok=2500,jsonMode=true){
     const text=(c.content?.parts||[]).filter(p=>typeof p.text==='string'&&p.text.trim().length>2).map(p=>p.text).join('');
     return text.replace(/^```(?:json)?\s*/,'').replace(/\s*```$/,'').trim();
   }
-  throw new Error('Gemini 429: rate limited after retries — enable billing for higher quota');
+  throw new Error('Gemini unavailable after retries — check quota or try again');
 }
 async function _rawGemini(prompt,sys,maxTok=2500,jsonMode=true){
   // Only use search mode for explicit search requests, not structured analysis
@@ -5966,6 +6317,17 @@ function computeNMS(stories){
     if(analystBoost>0)s._analystBoost=true;
     nmsMap[s.headline]=nmsAdjusted;
     s._ts=ts;s._ps=ps;s._ss=ss;s._nms=nmsAdjusted;
+    // ── ATTENTION vs PREDICTIVE SIGNAL separation ─────────────
+    // Attention = how loud the story is (trend + sentiment)
+    // Predictive = whether the story historically leads outcomes (PM + clustering)
+    // These are NOT the same. High attention ≠ high predictive value.
+    const attentionRaw=(ts*(wT||0.25)+Math.abs(ss-0.5)*2*(wS||0.10))/(((wT||0.25)+(wS||0.10))||1);
+    const predictiveRaw=(Math.abs(ps-0.5)*2*(wP||0.50)+coSignal*(wC||0.15))/(((wP||0.50)+(wC||0.15))||1);
+    s._attentionScore=Math.round(Math.min(1,Math.max(0,attentionRaw))*100)/100;
+    s._predictiveSignal=Math.round(Math.min(1,Math.max(0,predictiveRaw))*100)/100;
+    // Divergence: attention >> predictive = hype (crowd noise, not edge)
+    //             predictive >> attention = hidden signal (institutional positioning)
+    s._attentionPredictiveDelta=Math.round((s._attentionScore-s._predictiveSignal)*100);
     const ni=s.sourceCount?Math.min(1,s.sourceCount/60):0.5;
     const hasPM=!!(s.pmMarketId); // true only if a real PM market was matched
     const div=classifyDivergence(ts,ps,ss,ni,hasPM);
@@ -6684,7 +7046,82 @@ document.getElementById('m20Side').innerHTML=ranked.map(it=>{
 // ═══════════════════════════════════════════════════════════
 // FACTOR LAB
 // ═══════════════════════════════════════════════════════════
+function renderDailyReview(){
+  const el=document.getElementById('dailyReviewDisplay');
+  const dateEl=document.getElementById('dailyReviewDate');
+  if(!el)return;
+  const today=new Date();
+  const todayStr=today.toLocaleDateString('en-US',{weekday:'long',month:'long',day:'numeric'});
+  if(dateEl)dateEl.textContent=todayStr;
+  const preds=SIGNAL_STORE.predictions;
+  const now=Date.now();
+  const todayStart=new Date();todayStart.setHours(0,0,0,0);
+  const todayTs=todayStart.getTime();
+  // New predictions created today
+  const newToday=preds.filter(p=>{
+    const ts=new Date(p.createdAt||p.ts||0).getTime();
+    return ts>=todayTs;
+  });
+  // Due for resolution (resolveBy within next 3 days, still pending)
+  const dueSoon=preds.filter(p=>{
+    if(p.resolved||p.status==='expired')return false;
+    if(!p.resolveBy)return false;
+    const rb=new Date(p.resolveBy).getTime();
+    return rb>=now&&rb<=now+3*86400000;
+  });
+  // Overdue (resolveBy passed, not resolved)
+  const overdue=preds.filter(p=>{
+    if(p.resolved||p.status==='expired')return false;
+    if(!p.resolveBy)return false;
+    return new Date(p.resolveBy).getTime()<now;
+  });
+  // Resolved today
+  const resolvedToday=preds.filter(p=>{
+    if(!p.resolved||!p.resolvedAt)return false;
+    return new Date(p.resolvedAt).getTime()>=todayTs;
+  });
+  // Calibration snapshot
+  const audit=typeof SIG!=='undefined'?SIG.audit():null;
+  const totalResolved=audit?.resolvedCount||0;
+  // Best/worst source
+  const sr=Object.entries(SIGNAL_STORE.sourceReliability||{}).filter(([,v])=>v.total>=3);
+  const bestSrc=sr.sort(([,a],[,b])=>b.correct/b.total-a.correct/a.total)[0];
+  const worstSrc=sr.sort(([,a],[,b])=>a.correct/a.total-b.correct/b.total)[0];
+  // Most overconfident category
+  const cb=audit?.categoryBias||{};
+  const mostOverconf=Object.entries(cb).filter(([,v])=>v.total>=2).sort(([,a],[,b])=>b.overconfidence-a.overconfidence)[0];
+
+  el.innerHTML=`
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-bottom:.5rem;">
+      <div style="background:var(--s1);border-radius:4px;padding:.4rem .6rem;">
+        <div style="font-size:8px;color:var(--t3);text-transform:uppercase;letter-spacing:.06em;">New Today</div>
+        <div style="font-size:18px;font-family:var(--mono);font-weight:700;color:var(--acc);">${newToday.length}</div>
+      </div>
+      <div style="background:var(--s1);border-radius:4px;padding:.4rem .6rem;">
+        <div style="font-size:8px;color:var(--t3);text-transform:uppercase;letter-spacing:.06em;">Due Soon</div>
+        <div style="font-size:18px;font-family:var(--mono);font-weight:700;color:${dueSoon.length>0?'var(--amber)':'var(--t2)'};">${dueSoon.length}</div>
+      </div>
+      <div style="background:var(--s1);border-radius:4px;padding:.4rem .6rem;">
+        <div style="font-size:8px;color:var(--t3);text-transform:uppercase;letter-spacing:.06em;">Overdue</div>
+        <div style="font-size:18px;font-family:var(--mono);font-weight:700;color:${overdue.length>0?'var(--red)':'var(--t2)'};">${overdue.length}</div>
+      </div>
+      <div style="background:var(--s1);border-radius:4px;padding:.4rem .6rem;">
+        <div style="font-size:8px;color:var(--t3);text-transform:uppercase;letter-spacing:.06em;">Resolved Today</div>
+        <div style="font-size:18px;font-family:var(--mono);font-weight:700;color:${resolvedToday.length>0?'var(--green)':'var(--t2)'};">${resolvedToday.length}</div>
+      </div>
+    </div>
+    <div style="font-size:9px;color:var(--t3);line-height:1.8;">
+      ${totalResolved>0?`<div>Total resolved: <span style="color:var(--t2);font-weight:700;">${totalResolved}</span></div>`:''}
+      ${bestSrc?`<div>Best source: <span style="color:var(--green);font-weight:700;">${bestSrc[0]}</span> (${Math.round(bestSrc[1].correct/bestSrc[1].total*100)}% acc)</div>`:''}
+      ${worstSrc&&worstSrc[0]!==bestSrc?.[0]?`<div>Weakest source: <span style="color:var(--amber);font-weight:700;">${worstSrc[0]}</span> (${Math.round(worstSrc[1].correct/worstSrc[1].total*100)}% acc)</div>`:''}
+      ${mostOverconf?`<div>Most overconfident: <span style="color:var(--red);font-weight:700;">${mostOverconf[0]}</span> (+${mostOverconf[1].overconfidence}% gap)</div>`:''}
+      ${dueSoon.length?`<div style="margin-top:.3rem;color:var(--amber);">Due: ${dueSoon.slice(0,2).map(p=>(p.question||'').slice(0,40)).join(' · ')}</div>`:''}
+      ${overdue.length?`<div style="color:var(--red);">Overdue: ${overdue.slice(0,2).map(p=>(p.question||'').slice(0,40)).join(' · ')}</div>`:''}
+    </div>`;
+}
+
 function renderLabData(){
+  renderDailyReview();
   const preds=getUnifiedPredictions();
   const outcomes=labGet('outcomes');
   const captures=labGet('captures');
@@ -6728,6 +7165,55 @@ function renderLabData(){
 
   // Prediction type distribution
   const ptEl=document.getElementById('predTypeDisplay');
+  // Category bias display
+  const cbEl=document.getElementById('categoryBiasDisplay');
+  if(cbEl){
+    const audit=typeof SIG!=='undefined'?SIG.audit():null;
+    const cb=audit?.categoryBias||{};
+    const cbEntries=Object.entries(cb).filter(([,v])=>v.total>=2).sort(([,a],[,b])=>Math.abs(b.overconfidence||0)-Math.abs(a.overconfidence||0));
+    cbEl.innerHTML=cbEntries.length?cbEntries.map(([cat,v])=>{
+      const oc=v.overconfidence||0;
+      const color=Math.abs(oc)<=10?'var(--green)':Math.abs(oc)<=20?'var(--amber)':'var(--red)';
+      const label=Math.abs(oc)<=10?'calibrated':oc>0?'overconfident':'underconfident';
+      return`<div style="display:flex;align-items:center;gap:6px;margin-bottom:4px;">
+        <span style="font-size:9px;font-family:var(--mono);color:var(--t3);min-width:80px;text-transform:uppercase;">${cat}</span>
+        <span style="font-size:9px;font-family:var(--mono);color:var(--t2);">${v.avgConf}%→${v.accuracy}%</span>
+        <span style="font-size:8px;color:${color};">${oc>0?'+':''}${oc}% ${label} (n=${v.total})</span>
+      </div>`;
+    }).join(''):`<div class="empty" style="padding:.5rem;font-size:10px;">Resolve predictions across categories</div>`;
+  }
+  // Version performance display
+  const vpEl=document.getElementById('versionPerfDisplay');
+  if(vpEl){
+    const audit=typeof SIG!=='undefined'?SIG.audit():null;
+    const vp=audit?.versionPerformance||{};
+    const vpEntries=Object.entries(vp).filter(([,v])=>v.total>=2).sort(([a],[b])=>a.localeCompare(b));
+    vpEl.innerHTML=vpEntries.length?vpEntries.map(([ver,v])=>{
+      const color=v.accuracy>=70?'var(--green)':v.accuracy>=50?'var(--amber)':'var(--red)';
+      return`<div style="display:flex;align-items:center;gap:8px;margin-bottom:4px;">
+        <span style="font-size:9px;font-family:var(--mono);color:var(--acc);min-width:40px;">${ver}</span>
+        <span style="font-size:9px;font-family:var(--mono);color:${color};">${v.accuracy}% acc</span>
+        <span style="font-size:9px;font-family:var(--mono);color:var(--t3);">Brier ${v.avgBrier??'—'}</span>
+        <span style="font-size:8px;color:var(--t3);">(n=${v.total})</span>
+      </div>`;
+    }).join(''):`<div class="empty" style="padding:.5rem;font-size:10px;">Resolve predictions to compare versions</div>`;
+  }
+  // Factor attribution display
+  const faEl=document.getElementById('factorAttributionDisplay');
+  if(faEl){
+    const fa=SIGNAL_STORE.factorAttribution||{};
+    const faEntries=Object.entries(fa).filter(([,v])=>v.total>=3).sort(([,a],[,b])=>(b.correct/b.total)-(a.correct/a.total));
+    faEl.innerHTML=faEntries.length?faEntries.map(([factor,v])=>{
+      const acc=Math.round(v.correct/v.total*100);
+      const avgVal=Math.round(v.sumValue/v.total);
+      const color=acc>=70?'var(--green)':acc>=50?'var(--amber)':'var(--red)';
+      return`<div style="display:flex;align-items:center;gap:6px;margin-bottom:4px;">
+        <span style="font-size:9px;font-family:var(--mono);color:var(--t3);min-width:110px;">${factor}</span>
+        <span style="font-size:9px;font-family:var(--mono);color:${color};">${acc}% acc</span>
+        <span style="font-size:8px;color:var(--t3);">avg=${avgVal} (n=${v.total})</span>
+      </div>`;
+    }).join(''):`<div class="empty" style="padding:.5rem;font-size:10px;">Need 3+ resolved predictions per factor</div>`;
+  }
   if(ptEl){
     const typeCounts=preds.reduce((a,p)=>{const t=p.type||'general';a[t]=(a[t]||0)+1;return a;},{});
     const total=preds.length||1;
@@ -6744,7 +7230,33 @@ function renderLabData(){
       </div>`;
     }).join('')||'<div class="empty" style="padding:.5rem;font-size:10px;">No predictions yet</div>';
   }
-  const allWithReturns=outcomes.filter(o=>o.r14d!==null&&o.nmsAtCapture!==null);
+  // Daily Forecast Review
+  const drEl=document.getElementById('dailyReviewDisplay');
+  const drDate=document.getElementById('dailyReviewDate');
+  if(drEl){
+    const today=new Date().toISOString().slice(0,10);
+    if(drDate)drDate.textContent=new Date().toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'});
+    const todayPreds=preds.filter(p=>(p.createdAt||p.ts||'').slice(0,10)===today);
+    const dueToday=preds.filter(p=>!p.resolved&&p.resolveBy&&p.resolveBy.slice(0,10)<=today);
+    const resolvedToday=preds.filter(p=>p.resolved&&(p.resolvedAt||'').slice(0,10)===today);
+    const overallAcc=preds.filter(p=>p.resolved).length?Math.round(preds.filter(p=>p.resolved&&p.correct).length/preds.filter(p=>p.resolved).length*100):null;
+    const todayAcc=resolvedToday.length?Math.round(resolvedToday.filter(p=>p.correct).length/resolvedToday.length*100):null;
+    const catStats={};
+    preds.filter(p=>p.resolved).forEach(p=>{const c=p.type||'general';const conf=p.confidence??50;if(!catStats[c])catStats[c]={confSum:0,correct:0,total:0};catStats[c].total++;catStats[c].confSum+=conf;if(p.correct)catStats[c].correct++;});
+    const mostOverconf=Object.entries(catStats).filter(([,v])=>v.total>=3).map(([c,v])=>({c,overconf:Math.round(v.confSum/v.total)-(Math.round(v.correct/v.total*100))})).sort((a,b)=>b.overconf-a.overconf)[0];
+    drEl.innerHTML=`
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:.5rem;">
+        <div style="padding:.4rem .6rem;background:var(--s1);border-radius:4px;"><div style="font-size:8px;color:var(--t3);font-weight:700;letter-spacing:.06em;margin-bottom:2px;">NEW TODAY</div><div style="font-size:16px;font-weight:800;font-family:var(--mono);color:var(--acc);">${todayPreds.length}</div></div>
+        <div style="padding:.4rem .6rem;background:var(--s1);border-radius:4px;"><div style="font-size:8px;color:var(--t3);font-weight:700;letter-spacing:.06em;margin-bottom:2px;">DUE FOR RESOLUTION</div><div style="font-size:16px;font-weight:800;font-family:var(--mono);color:${dueToday.length>0?'var(--amber)':'var(--t3)'};">${dueToday.length}</div></div>
+        <div style="padding:.4rem .6rem;background:var(--s1);border-radius:4px;"><div style="font-size:8px;color:var(--t3);font-weight:700;letter-spacing:.06em;margin-bottom:2px;">RESOLVED TODAY</div><div style="font-size:16px;font-weight:800;font-family:var(--mono);color:var(--green);">${resolvedToday.length}</div></div>
+        <div style="padding:.4rem .6rem;background:var(--s1);border-radius:4px;"><div style="font-size:8px;color:var(--t3);font-weight:700;letter-spacing:.06em;margin-bottom:2px;">TODAY / OVERALL</div><div style="font-size:13px;font-weight:800;font-family:var(--mono);color:var(--t2);">${todayAcc!=null?todayAcc+'%':'—'} / ${overallAcc!=null?overallAcc+'%':'—'}</div></div>
+      </div>
+      ${mostOverconf?`<div style="font-size:9px;color:var(--amber);">Most overconfident: <strong>${mostOverconf.c}</strong> (+${mostOverconf.overconf}% stated vs actual)</div>`:''}
+      ${dueToday.length?`<div style="font-size:9px;color:var(--amber);margin-top:3px;">⚠ ${dueToday.length} prediction${dueToday.length>1?'s':''} past due — resolve in tracked predictions ↓</div>`:''}
+    `;
+  }
+
+  // Factor correlation — regime-filtered
   // Save IC snapshot — deduplicated by captureId so safe to call on every render
   if(allWithReturns.length>=5){
     const ic7now=computeIC(allWithReturns,'r7d');
@@ -7748,24 +8260,43 @@ function renderBrierStats(bs){
   if(!bs)return'<div class="empty" style="padding:.5rem;">No resolved predictions yet</div>';
   const q=bs.brier<=0.1?'Excellent':bs.brier<=0.2?'Good':bs.brier<=0.25?'Fair':'Poor';
   const color=bs.brier<=0.1?'var(--green)':bs.brier<=0.2?'var(--acc)':bs.brier<=0.25?'var(--amber)':'var(--red)';
-  // Calibration bars
-  const calBars=Object.entries(bs.buckets).sort(([a],[b])=>+a-+b).map(([bucket,data])=>{
-    const rate=Math.round(data.wins/data.count*100);
-    const expected=+bucket;
-    const diff=Math.abs(rate-expected);
-    return`<div style="display:flex;align-items:center;gap:6px;margin-bottom:4px;">
-      <span style="font-size:9px;font-family:var(--mono);color:var(--t3);min-width:32px;">${expected}%</span>
-      <div style="flex:1;height:5px;background:var(--b1);border-radius:2px;overflow:hidden;">
-        <div style="width:${rate}%;height:100%;background:${diff>15?'var(--amber)':'var(--green)'};border-radius:2px;"></div>
+  // Calibration truth table: predicted confidence vs actual outcome rate
+  const calTable=Object.entries(bs.buckets).sort(([a],[b])=>+a-+b).map(([bucket,data])=>{
+    const predicted=+bucket;
+    const actual=Math.round(data.wins/data.count*100);
+    const diff=actual-predicted;
+    const diffColor=Math.abs(diff)<=10?'var(--green)':Math.abs(diff)<=20?'var(--amber)':'var(--red)';
+    const diffStr=diff>0?`+${diff}%`:diff<0?`${diff}%`:'0%';
+    const calibLabel=Math.abs(diff)<=10?'✓ calibrated':diff>0?'↑ underconfident':'↓ overconfident';
+    return`<div style="display:grid;grid-template-columns:40px 1fr 50px 50px 90px;align-items:center;gap:6px;margin-bottom:5px;padding:3px 0;border-bottom:1px solid var(--b1);">
+      <span style="font-size:9px;font-family:var(--mono);color:var(--t3);">${predicted}%</span>
+      <div style="height:4px;background:var(--b1);border-radius:2px;overflow:hidden;position:relative;">
+        <div style="position:absolute;left:0;top:0;width:${predicted}%;height:100%;background:var(--b2);border-radius:2px;"></div>
+        <div style="position:absolute;left:0;top:0;width:${actual}%;height:100%;background:${diffColor};border-radius:2px;opacity:.8;"></div>
       </div>
-      <span style="font-size:9px;font-family:var(--mono);color:var(--t2);min-width:32px;">${rate}% (${data.count})</span>
+      <span style="font-size:9px;font-family:var(--mono);color:var(--t2);text-align:right;">${actual}%</span>
+      <span style="font-size:9px;font-family:var(--mono);color:${diffColor};text-align:right;">${diffStr}</span>
+      <span style="font-size:8px;color:${diffColor};">${calibLabel} (${data.count})</span>
     </div>`;
   }).join('');
+  const storeCal=typeof SIGNAL_STORE!=='undefined'?SIGNAL_STORE.calibration:{};
+  const storeRows=Object.entries(storeCal).filter(([,v])=>v.total>0).sort(([a],[b])=>+a.slice(1)-+b.slice(1)).map(([bucket,v])=>{
+    const predicted=+bucket.slice(1);
+    const actual=Math.round(v.correct/v.total*100);
+    return`<span style="font-size:8px;font-family:var(--mono);color:var(--t3);">${predicted}%→${actual}% (${v.total})</span>`;
+  }).join(' · ');
   return`
     <div class="stat-row"><span class="stat-lbl">Brier Score</span><span class="stat-val" style="color:${color};">${bs.brier} <span class="txt-10">(${q})</span></span></div>
-    <div class="stat-row"><span class="stat-lbl">Resolved predictions</span><span class="stat-val">${bs.n}</span></div>
-    <div style="font-size:9px;color:var(--t3);margin-bottom:.5rem;">Calibration (predicted vs actual rate):</div>
-    ${calBars||'<div class="txt-10 t-t3">Need predictions across confidence ranges</div>'}
+    <div class="stat-row"><span class="stat-lbl">Resolved</span><span class="stat-val">${bs.n}</span></div>
+    <div style="font-size:9px;color:var(--t3);margin:.4rem 0 .2rem;"><strong style="color:var(--t2);">Calibration Truth Table</strong> — stated vs actual outcome rate</div>
+    <div style="display:grid;grid-template-columns:40px 1fr 50px 50px 90px;gap:4px;margin-bottom:3px;">
+      <span style="font-size:8px;color:var(--t3);">stated</span><span style="font-size:8px;color:var(--t3);">chart</span>
+      <span style="font-size:8px;color:var(--t3);text-align:right;">actual</span>
+      <span style="font-size:8px;color:var(--t3);text-align:right;">delta</span>
+      <span style="font-size:8px;color:var(--t3);">verdict</span>
+    </div>
+    ${calTable||'<div class="txt-10 t-t3">Need predictions across confidence ranges</div>'}
+    ${storeRows?`<div style="margin-top:.3rem;padding-top:.3rem;border-top:1px solid var(--b1);">${storeRows}</div>`:''}
     <div class="factor-bar" style="margin-top:.4rem;"><div class="factor-fill" style="width:${Math.max(0,Math.min(100,(1-bs.brier/0.25)*100))}%;background:${color};"></div></div>`;
 }
 
@@ -7898,45 +8429,42 @@ let _kalshiCache={}; // marketId -> {prob, ts}
 
 async function fetchKalshiMarkets(keywords=[]){
   if(window.location.protocol==='file:')return[];
-  try{
-    const params=new URLSearchParams({limit:'200',status:'open'});
-    const r=await proxyFetch(`${KALSHI_API}/markets?${params}`);
-    if(!r.ok)return[];
-    const d=await r.json();
-    const markets=d.markets||[];
-    // Filter out machine-generated parlay contracts
-    const clean=markets.filter(m=>!/yes .+,yes /i.test(m.title||''));
-    // Score by macro keyword relevance
-    const kw=[...keywords,...['Fed','rate','inflation','GDP','recession','CPI','jobs','tariff','oil','gold','bitcoin','election','debt','spending']].map(k=>k.toLowerCase());
-    const scored=clean.map(m=>{
-      const title=((m.title||'')+(m.subtitle||'')).toLowerCase();
-      const hits=kw.filter(k=>k.length>2&&title.includes(k)).length;
-      return{...m,_relevance:hits};
-    }).filter(m=>m._relevance>0).sort((a,b)=>b._relevance-a._relevance);
-    const result=scored.length?scored.slice(0,20):clean.slice(0,20);
-
-    // ── KALSHI PRICE HISTORY ACCUMULATION (for insider detection) ──
-    // Store {ts, prob} per market ticker, capped at 50 points per market
+  return _deduplicatedFetch('kalshi_markets',async()=>{
     try{
-      const _KH_KEY='sig_kalshi_history_v1';
-      const history=JSON.parse(localStorage.getItem(_KH_KEY)||'{}');
-      const now=Date.now();
-      result.forEach(m=>{
-        const id=m.ticker||m.id||m.title?.slice(0,20);
-        if(!id)return;
-        const prob=kalshiProb(m);
-        if(!history[id])history[id]=[];
-        history[id].push({ts:now,prob});
-        if(history[id].length>50)history[id]=history[id].slice(-50);
-      });
-      localStorage.setItem(_KH_KEY,JSON.stringify(history));
-    }catch{}
-
-    return result;
-  }catch(e){
-    console.warn('Kalshi fetch failed:',e.message);
-    return[];
-  }
+      const params=new URLSearchParams({limit:'200',status:'open'});
+      const r=await proxyFetch(`${KALSHI_API}/markets?${params}`);
+      if(!r.ok)return[];
+      const d=await r.json();
+      const markets=d.markets||[];
+      const clean=markets.filter(m=>!/yes .+,yes /i.test(m.title||''));
+      const kw=[...keywords,...['Fed','rate','inflation','GDP','recession','CPI','jobs','tariff','oil','gold','bitcoin','election','debt','spending']].map(k=>k.toLowerCase());
+      const scored=clean.map(m=>{
+        const title=((m.title||'')+(m.subtitle||'')).toLowerCase();
+        const hits=kw.filter(k=>k.length>2&&title.includes(k)).length;
+        return{...m,_relevance:hits};
+      }).filter(m=>m._relevance>0).sort((a,b)=>b._relevance-a._relevance);
+      const result=scored.length?scored.slice(0,20):clean.slice(0,20);
+      // Kalshi price history accumulation for insider detection
+      try{
+        const _KH_KEY='sig_kalshi_history_v1';
+        const history=JSON.parse(localStorage.getItem(_KH_KEY)||'[]');
+        const now=Date.now();
+        result.forEach(m=>{
+          const id=m.ticker||m.id||m.title?.slice(0,20);
+          if(!id)return;
+          const prob=kalshiProb(m);
+          if(!history[id])history[id]=[];
+          history[id].push({ts:now,prob});
+          if(history[id].length>50)history[id]=history[id].slice(-50);
+        });
+        localStorage.setItem(_KH_KEY,JSON.stringify(history));
+      }catch{}
+      return result;
+    }catch(e){
+      console.warn('Kalshi fetch failed:',e.message);
+      return[];
+    }
+  });
 }
 
 function kalshiProb(market){
@@ -8751,8 +9279,28 @@ function renderEventPredictions(forecasts){
     const cat=(f.category||'MED').toLowerCase();
     const confColor=f.confidence>70?'var(--green)':f.confidence>=50?'var(--amber)':'var(--t3)';
     const pmColor=f.pmAlignment>60?'var(--green)':f.pmAlignment<40?'var(--red)':'var(--t2)';
+    // Trust Bar
+    const srcRel=SIGNAL_STORE.sourceReliability[f.source||'generate'];
+    const srcLabel=!srcRel||srcRel.total<3?'Low sample':srcRel.correct/srcRel.total>=0.7?'High':'Medium';
+    const srcColor=!srcRel||srcRel.total<3?'var(--t3)':srcRel.correct/srcRel.total>=0.7?'var(--green)':'var(--amber)';
+    const evidenceQ=(f.linkedStories?.length||0)>2?'Strong':(f.linkedStories?.length||0)>0?'Medium':'Low';
+    const evidenceColor=evidenceQ==='Strong'?'var(--green)':evidenceQ==='Medium'?'var(--amber)':'var(--t3)';
+    const resolveByStr=f.resolveBy?new Date(f.resolveBy).toLocaleDateString('en-US',{month:'short',day:'numeric'}):'—';
+    const auditOk=!!(f.question&&f.confidence&&f.type&&f.createdAt);
     return`<div class="forecast-card fc-${cat}">
       <div class="fc-event">${esc(f.event)}</div>
+      <div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:.5rem;padding:.35rem .5rem;background:var(--s1);border-radius:4px;border:1px solid var(--b1);">
+        <span style="font-size:8px;color:var(--t3);font-weight:700;letter-spacing:.06em;">TRUST</span>
+        <span style="font-size:8px;font-family:var(--mono);color:${confColor};">conf ${f.confidence}%</span>
+        <span style="font-size:8px;color:var(--t3);">·</span>
+        <span style="font-size:8px;font-family:var(--mono);color:${evidenceColor};">evidence ${evidenceQ}</span>
+        <span style="font-size:8px;color:var(--t3);">·</span>
+        <span style="font-size:8px;font-family:var(--mono);color:${srcColor};">source ${srcLabel}</span>
+        <span style="font-size:8px;color:var(--t3);">·</span>
+        <span style="font-size:8px;font-family:var(--mono);color:var(--t2);">resolves ${resolveByStr}</span>
+        <span style="font-size:8px;color:var(--t3);">·</span>
+        <span style="font-size:8px;color:${auditOk?'var(--green)':'var(--amber)'};">${auditOk?'✓ valid':'⚠ incomplete'}</span>
+      </div>
       <div class="fc-meta">
         <div class="fc-stat">
           <span class="fc-stat-lbl">Confidence</span>
@@ -8782,6 +9330,14 @@ function renderEventPredictions(forecasts){
           <span class="fc-stat-lbl">Domain</span>
           <span class="fc-stat-val" style="text-transform:capitalize;">${esc(f.domain||'—')}</span>
         </div>
+      </div>
+      <!-- Trust Bar -->
+      <div style="display:flex;flex-wrap:wrap;gap:8px;padding:.35rem .5rem;background:var(--s1);border-radius:4px;margin-bottom:.4rem;border:1px solid var(--b1);font-size:8px;">
+        <span style="color:var(--t3);">CONFIDENCE <span style="color:${confColor};font-weight:700;">${f.confidence}%</span></span>
+        <span style="color:var(--t3);">EVIDENCE <span style="color:${((f.klBits!=null?1:0)+(f.narrativeEntropy!=null?1:0)+(f.surpriseZ!=null?1:0))>=2?'var(--green)':'var(--t3)'};font-weight:700;">${((f.klBits!=null?1:0)+(f.narrativeEntropy!=null?1:0)+(f.surpriseZ!=null?1:0))>=2?'Medium+':'Low'}</span></span>
+        <span style="color:var(--t3);">SOURCE <span style="color:${(()=>{const sr=SIGNAL_STORE.sourceReliability[f.source||'unknown'];return sr&&sr.total>=5?(sr.correct/sr.total>=0.7?'var(--green)':'var(--amber)'):'var(--t3)'})()};font-weight:700;">${(()=>{const sr=SIGNAL_STORE.sourceReliability[f.source||'unknown'];return sr&&sr.total>=5?Math.round(sr.correct/sr.total*100)+'% acc':'Low sample'})()}</span></span>
+        <span style="color:var(--t3);">RESOLVES <span style="color:var(--t2);font-weight:700;">${f.resolveBy?new Date(f.resolveBy).toLocaleDateString('en-US',{month:'short',day:'numeric'}):'—'}</span></span>
+        <span style="color:var(--t3);">AUDIT <span style="color:${(f.confidence&&f.type&&f.createdAt)?'var(--green)':'var(--amber)'};font-weight:700;">${(f.confidence&&f.type&&f.createdAt)?'Valid':'Incomplete'}</span></span>
       </div>
       <div class="fc-rationale">${esc(f.rationale||'')}</div>
       ${f.keyRisk?`<div class="fc-risk">⚠ Risk: ${esc(f.keyRisk)}</div>`:''}
@@ -9009,6 +9565,16 @@ function getNarrativeGraph(){return _narrativeGraph;}
 if(window.SIG){
   window.SIG.narrativeGraph=()=>_narrativeGraph;
   window.SIG.topEdges=(n=10)=>Object.entries(_narrativeGraph.edges||{}).sort(([,a],[,b])=>b.weight-a.weight).slice(0,n).map(([k,v])=>`${v.from} ↔ ${v.to} (${v.count}x, NMS=${Math.round(v.weight*10)/10})`);
+  // Attention vs Predictive Signal analysis
+  window.SIG.attentionVsPredictive=(n=10)=>{
+    const src=(_sweepStories.length?_sweepStories:stories).filter(s=>s._attentionScore!=null);
+    const hype=src.filter(s=>s._attentionPredictiveDelta>20).sort((a,b)=>b._attentionPredictiveDelta-a._attentionPredictiveDelta).slice(0,n);
+    const hidden=src.filter(s=>s._attentionPredictiveDelta<-20).sort((a,b)=>a._attentionPredictiveDelta-b._attentionPredictiveDelta).slice(0,n);
+    return{
+      hype:hype.map(s=>({headline:s.headline.slice(0,60),attention:Math.round(s._attentionScore*100),predictive:Math.round(s._predictiveSignal*100),delta:s._attentionPredictiveDelta})),
+      hidden:hidden.map(s=>({headline:s.headline.slice(0,60),attention:Math.round(s._attentionScore*100),predictive:Math.round(s._predictiveSignal*100),delta:s._attentionPredictiveDelta}))
+    };
+  };
 }
 
 function buildNarrativeClusters(stories){
