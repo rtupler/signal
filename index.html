@@ -994,7 +994,7 @@ button:focus-visible,a:focus-visible{outline:2px solid var(--acc);outline-offset
 <div class="gate" id="gate">
   <div class="gate-box">
     <div class="gate-eyebrow">Predictive Intelligence Platform</div>
-    <div class="gate-logo">SIGNAL<span class="gate-v">v53</span></div>
+    <div class="gate-logo">SIGNAL<span class="gate-v">v54</span></div>
     <div class="gate-tagline">Narrative Momentum Score · NMI composite · <strong>Velocity-weighted event prediction</strong> · KL-edge calibration · Self-calibrating Factor Lab</div>
     <div class="gate-sep"></div>
     <div class="gate-label">Gemini API Key <span style="color:rgba(255,255,255,.3);font-weight:400;letter-spacing:0;text-transform:none;">(aistudio.google.com — free)</span></div>
@@ -1821,14 +1821,210 @@ const _PERF={
 };
 
 // Expose on window for console access
-window.SIG={
+// ═══════════════════════════════════════════════════════════════
+// SIGNAL ENGINE — Central store + 4 canonical functions
+// UI reads from SIGNAL_STORE. UI never owns truth.
+// ═══════════════════════════════════════════════════════════════
+window.SIGNAL_STORE={
+  predictions:[],   // canonical prediction objects
+  stories:[],       // current session stories
+  markets:[],       // kalshi/pm markets
+  entities:{},      // entity -> [{ts, mentions, sentiment}]
+  calibration:{     // bucket -> {correct, total}
+    b50:{correct:0,total:0},
+    b60:{correct:0,total:0},
+    b70:{correct:0,total:0},
+    b80:{correct:0,total:0},
+    b90:{correct:0,total:0}
+  },
+  sourceReliability:{}, // source -> {correct, total, brier}
+  scores:{},        // predictionId -> {klBits, kelly, brier, surpriseZ}
+  history:[]        // resolution history for temporal learning
+};
+
+// Load store from localStorage on init
+function _loadStore(){
+  try{
+    SIGNAL_STORE.predictions=getUnifiedPredictions();
+    // Rebuild calibration from resolved predictions
+    SIGNAL_STORE.predictions.filter(p=>p.resolved&&p.correct!=null).forEach(p=>{
+      const conf=p.yesProb??p.confidence??50;
+      const bucket='b'+Math.round(conf/10)*10;
+      // Map to nearest 50/60/70/80/90 bucket
+      const b=conf<55?'b50':conf<65?'b60':conf<75?'b70':conf<85?'b80':'b90';
+      if(!SIGNAL_STORE.calibration[b])SIGNAL_STORE.calibration[b]={correct:0,total:0};
+      SIGNAL_STORE.calibration[b].total++;
+      if(p.correct)SIGNAL_STORE.calibration[b].correct++;
+      // Source reliability
+      const src=p.source||'unknown';
+      if(!SIGNAL_STORE.sourceReliability[src])SIGNAL_STORE.sourceReliability[src]={correct:0,total:0,brier:0};
+      SIGNAL_STORE.sourceReliability[src].total++;
+      if(p.correct)SIGNAL_STORE.sourceReliability[src].correct++;
+    });
+  }catch(e){console.warn('[SIGNAL_STORE] load failed:',e.message);}
+}
+
+// ── 1. addPrediction ────────────────────────────────────────────
+// Validates, normalizes, deduplicates, persists, updates store
+function addPrediction(raw,source='manual'){
+  // Validation
+  const title=(raw.event||raw.question||'').trim();
+  if(!title||title.length<10){console.warn('[addPrediction] rejected — no meaningful question');return null;}
+  const conf=Number(raw.confidence??raw.yesProb??50);
+  if(conf<1||conf>99){console.warn('[addPrediction] rejected — confidence out of range:',conf);return null;}
+  // Full ontology normalization
+  const pred={
+    ...raw,
+    id:raw.id||('pred_'+Date.now()+'_'+Math.random().toString(36).slice(2,7)),
+    source,
+    question:title,
+    event:title,
+    type:raw.type||_inferPredictionType(title),
+    confidence:Math.round(conf),
+    createdAt:raw.createdAt||raw.ts||new Date().toISOString(),
+    ts:raw.ts||raw.createdAt||new Date().toISOString(),
+    resolveBy:raw.resolveBy||raw.resolutionDate||_inferResolveBy(raw.horizon)||null,
+    direction:raw.direction||null,
+    status:'pending',
+    resolved:false,
+    correct:null,
+    outcome:null,
+    actualOutcome:null,
+    entities:raw.entities||_extractEntities(title),
+    drivers:raw.drivers||[],
+    linkedStories:raw.linkedStories||[],
+    linkedMarkets:raw.linkedMarkets||[],
+    evidence:raw.evidence||[],
+    calibrationBucket:'b'+Math.round(conf/10)*10,
+    scoreImpact:null,
+    narrativeShift:null,
+    klBits:raw.klBits||null,
+    kellyScore:raw.kellyScore||null,
+    fusedProb:raw.fusedProb||null,
+    narrativeEntropy:raw.narrativeEntropy||null,
+    surpriseZ:raw.surpriseZ||null,
+    schemaVersion:2
+  };
+  // Upsert to unified store (deduplication handled inside)
+  const saved=upsertUnifiedPrediction(pred,source);
+  // Update in-memory store
+  const idx=SIGNAL_STORE.predictions.findIndex(p=>p.id===saved.id);
+  if(idx>=0)SIGNAL_STORE.predictions[idx]=saved;
+  else SIGNAL_STORE.predictions.push(saved);
+  return saved;
+}
+
+// ── 2. resolvePrediction ────────────────────────────────────────
+// Marks outcome, updates calibration, source reliability, history
+function resolvePrediction(id,correct,actual=''){
+  const saved=resolveUnifiedPrediction(id,correct,actual);
+  if(!saved)return null;
+  // Update in-memory store
+  const idx=SIGNAL_STORE.predictions.findIndex(p=>p.id===id||p.marketId===id);
+  if(idx>=0)SIGNAL_STORE.predictions[idx]={...SIGNAL_STORE.predictions[idx],...saved};
+  // Update calibration bucket
+  const conf=saved.yesProb??saved.confidence??50;
+  const b=conf<55?'b50':conf<65?'b60':conf<75?'b70':conf<85?'b80':'b90';
+  if(!SIGNAL_STORE.calibration[b])SIGNAL_STORE.calibration[b]={correct:0,total:0};
+  SIGNAL_STORE.calibration[b].total++;
+  if(correct)SIGNAL_STORE.calibration[b].correct++;
+  // Update source reliability
+  const src=saved.source||'unknown';
+  if(!SIGNAL_STORE.sourceReliability[src])SIGNAL_STORE.sourceReliability[src]={correct:0,total:0};
+  SIGNAL_STORE.sourceReliability[src].total++;
+  if(correct)SIGNAL_STORE.sourceReliability[src].correct++;
+  // Append to history for temporal learning
+  SIGNAL_STORE.history.push({id,correct,resolvedAt:new Date().toISOString(),conf,src,type:saved.type||'unknown'});
+  if(typeof renderLabData==='function')renderLabData();
+  return saved;
+}
+
+// ── 3. scorePrediction ─────────────────────────────────────────
+// Computes confidence calibration, narrative quality, sharpness
+function scorePrediction(pred){
+  const conf=(pred.yesProb??pred.confidence??50)/100;
+  const src=pred.source||'unknown';
+  const rel=SIGNAL_STORE.sourceReliability[src];
+  const srcRate=rel&&rel.total>=5?rel.correct/rel.total:null;
+  // Sharpness: distance from 0.5 — sharp predictions are more informative
+  const sharpness=Math.abs(conf-0.5)*2;
+  // Calibration deviation: how far source accuracy is from stated confidence
+  const calDev=srcRate!=null?Math.abs(conf-srcRate):null;
+  // Information value: KL bits if available
+  const infoValue=pred.klBits||null;
+  const score={sharpness:Math.round(sharpness*100)/100,calDev:calDev!=null?Math.round(calDev*100)/100:null,infoValue,srcReliability:srcRate!=null?Math.round(srcRate*100):null};
+  SIGNAL_STORE.scores[pred.id]=score;
+  return score;
+}
+
+// ── 4. renderPredictions ───────────────────────────────────────
+// UI reads from SIGNAL_STORE — UI never owns truth
+function renderPredictions(){
+  const preds=SIGNAL_STORE.predictions;
+  if(typeof renderForecastLog==='function')renderForecastLog();
+  if(typeof renderLabData==='function')renderLabData();
+  return preds.length;
+}
+
+// ── Helper: infer prediction type from question text ───────────
+function _inferPredictionType(text){
+  const t=text.toLowerCase();
+  if(/fed|rate|inflation|cpi|pce|gdp|fomc|powell|yellen|jerome/i.test(t))return'macro';
+  if(/bitcoin|btc|eth|crypto|blockchain|solana/i.test(t))return'crypto';
+  if(/iran|russia|china|ukraine|war|strike|missile|nato|military/i.test(t))return'geopolitics';
+  if(/earnings|revenue|eps|guidance|quarter|profit|sales/i.test(t))return'earnings';
+  if(/supreme court|congress|senate|president|election|vote|legislation/i.test(t))return'political';
+  if(/sec|fda|doj|regulation|antitrust|investigation/i.test(t))return'regulatory';
+  return'general';
+}
+
+// ── Helper: infer resolveBy from horizon string ────────────────
+function _inferResolveBy(horizon){
+  if(!horizon)return null;
+  const now=Date.now();
+  const h=horizon.toLowerCase();
+  const n=parseInt(h)||0;
+  if(h.includes('day'))return new Date(now+n*86400000).toISOString();
+  if(h.includes('week'))return new Date(now+n*604800000).toISOString();
+  if(h.includes('month'))return new Date(now+n*2592000000).toISOString();
+  return null;
+}
+
+// ── Helper: extract named entities from prediction text ─────────
+function _extractEntities(text){
+  // Simple NER: capitalized words/phrases not at sentence start
+  const entities=[];
+  const words=text.split(/\s+/);
+  words.forEach((w,i)=>{
+    if(i>0&&/^[A-Z][a-zA-Z]{2,}/.test(w)&&!/^(The|A|An|This|That|These|Those|Will|By|In|On|At|For|From|With|And|Or|But|If|When|After|Before|During)$/.test(w)){
+      entities.push(w.replace(/[^a-zA-Z]/g,''));
+    }
+  });
+  return [...new Set(entities)].slice(0,5);
+}
+
+// Expose canonical API on window.SIG
+window.SIG=Object.assign(window.SIG||{},{
+  // Performance
   report:()=>_PERF.report(),
   data:()=>({marks:_PERF.marks,queueLog:_PERF.queueLog}),
   clear:()=>_PERF.clear(),
   json:()=>JSON.stringify({marks:_PERF.marks,queue:_PERF.queueLog},null,2),
-  predictions:()=>getUnifiedPredictions?.()||[],
-  predictionSummary:()=>{const p=getUnifiedPredictions?.()||[];return {total:p.length,bySource:p.reduce((a,x)=>(a[x.source||'unknown']=(a[x.source||'unknown']||0)+1,a),{}),resolved:p.filter(x=>x.resolved).length};}
-};
+  // Prediction engine — canonical API
+  predictions:()=>SIGNAL_STORE.predictions,
+  predictionSummary:()=>{const p=SIGNAL_STORE.predictions;return{total:p.length,bySource:p.reduce((a,x)=>(a[x.source||'unknown']=(a[x.source||'unknown']||0)+1,a),{}),resolved:p.filter(x=>x.resolved).length,byType:p.reduce((a,x)=>(a[x.type||'general']=(a[x.type||'general']||0)+1,a),{})};},
+  calibration:()=>SIGNAL_STORE.calibration,
+  sourceReliability:()=>SIGNAL_STORE.sourceReliability,
+  scores:()=>SIGNAL_STORE.scores,
+  store:()=>SIGNAL_STORE,
+  // Canonical 4 functions exposed for console access
+  add:(raw,src)=>addPrediction(raw,src),
+  resolve:(id,correct,actual)=>resolvePrediction(id,correct,actual),
+  score:(pred)=>scorePrediction(pred),
+  render:()=>renderPredictions(),
+  // Insider detection
+  insiders:()=>detectKalshiInsiders()
+});
 
 
 // ═══════════════════════════════════════════════════════════
@@ -3416,6 +3612,7 @@ function pruneAllStorage(){
 
 function boot(){
   pruneAllStorage();
+  _loadStore(); // initialize SIGNAL_STORE from localStorage
   // Show cached standing Q answers immediately
   try{
     const sqAnswers=JSON.parse(localStorage.getItem(_SQ_ANSWERS_KEY)||'{}');
@@ -8468,8 +8665,8 @@ Be specific: "Fed cuts 25bp in May 2026" not "Fed may cut rates".`,
         marketProb:marketProb!=null?Math.round(marketProb*100):null, // market-implied %
       };
     });
-    log.push(...newForecasts);
-    saveForecastLog(log);
+    // Route through canonical addPrediction for full ontology + store update
+    newForecasts.forEach(f=>addPrediction(f,'generate'));
     renderEventPredictions(newForecasts);
     setTabDot('predictions','loaded');
   }catch(e){
