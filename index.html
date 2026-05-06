@@ -7125,6 +7125,7 @@ function renderLabData(){
   const preds=getUnifiedPredictions();
   const outcomes=labGet('outcomes');
   const captures=labGet('captures');
+  const allWithReturns=outcomes.filter(o=>o.r14d!==null&&o.nmsAtCapture!==null);
 
   // Accuracy stats
   const brierStats=computeBrierStats(preds);
