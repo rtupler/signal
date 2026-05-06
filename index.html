@@ -994,7 +994,7 @@ button:focus-visible,a:focus-visible{outline:2px solid var(--acc);outline-offset
 <div class="gate" id="gate">
   <div class="gate-box">
     <div class="gate-eyebrow">Predictive Intelligence Platform</div>
-    <div class="gate-logo">SIGNAL<span class="gate-v">v54</span></div>
+    <div class="gate-logo">SIGNAL<span class="gate-v">v55</span></div>
     <div class="gate-tagline">Narrative Momentum Score · NMI composite · <strong>Velocity-weighted event prediction</strong> · KL-edge calibration · Self-calibrating Factor Lab</div>
     <div class="gate-sep"></div>
     <div class="gate-label">Gemini API Key <span style="color:rgba(255,255,255,.3);font-weight:400;letter-spacing:0;text-transform:none;">(aistudio.google.com — free)</span></div>
@@ -1345,6 +1345,18 @@ button:focus-visible,a:focus-visible{outline:2px solid var(--acc);outline-offset
           <div id="icTrendChart" style="padding:.3rem 0;"><div class="empty" style="padding:.5rem;">Accumulating sessions…</div></div>
           <div id="adaptiveWeightsDisplay" style="margin-top:.5rem;"></div>
         </div>
+      </div>
+
+      <!-- SOURCE RELIABILITY -->
+      <div class="lab-card mb-5">
+        <div class="lab-hd">Source Reliability <span class="lab-hd-act" style="font-weight:400;font-size:9px;">accuracy rate by prediction source</span></div>
+        <div id="sourceReliabilityDisplay"><div class="empty" style="padding:.5rem;font-size:10px;">Resolve predictions to build source track record</div></div>
+      </div>
+
+      <!-- CALIBRATION BY TYPE -->
+      <div class="lab-card mb-5">
+        <div class="lab-hd">Prediction Types <span class="lab-hd-act" style="font-weight:400;font-size:9px;">distribution by category</span></div>
+        <div id="predTypeDisplay"><div class="empty" style="padding:.5rem;font-size:10px;">Loading…</div></div>
       </div>
 
       <!-- PREDICTIONS LOG -->
@@ -1969,12 +1981,16 @@ function renderPredictions(){
 // ── Helper: infer prediction type from question text ───────────
 function _inferPredictionType(text){
   const t=text.toLowerCase();
-  if(/fed|rate|inflation|cpi|pce|gdp|fomc|powell|yellen|jerome/i.test(t))return'macro';
-  if(/bitcoin|btc|eth|crypto|blockchain|solana/i.test(t))return'crypto';
-  if(/iran|russia|china|ukraine|war|strike|missile|nato|military/i.test(t))return'geopolitics';
-  if(/earnings|revenue|eps|guidance|quarter|profit|sales/i.test(t))return'earnings';
-  if(/supreme court|congress|senate|president|election|vote|legislation/i.test(t))return'political';
-  if(/sec|fda|doj|regulation|antitrust|investigation/i.test(t))return'regulatory';
+  // Order matters — more specific first
+  if(/bitcoin|btc|ethereum|eth\b|crypto|blockchain|solana|defi|nft|web3|megaeth/i.test(t))return'crypto';
+  if(/earnings|revenue|eps|guidance|quarter|profit|loss|sales|margin|beat|miss/i.test(t))return'earnings';
+  if(/supreme court|congress|senate|house rep|president|election|vote|ballot|legislation|bill pass|veto/i.test(t))return'political';
+  if(/sec|fda|doj|ftc|cfpb|regulation|antitrust|investigation|indictment|charges|lawsuit|settlement/i.test(t))return'regulatory';
+  if(/fed\b|federal reserve|rate cut|rate hike|inflation|cpi\b|pce\b|gdp\b|fomc|powell|unemployment|jobs report|payroll/i.test(t))return'macro';
+  if(/iran|russia|china|ukraine|israel|hamas|war|strike|missile|nato|military|troops|ceasefire|sanction|strait|hormuz|taiwan/i.test(t))return'geopolitics';
+  if(/dengue|flu|covid|pandemic|outbreak|disease|virus|who\b|cdc\b|vaccine|health crisis/i.test(t))return'health';
+  if(/tariff|trade war|import|export|supply chain|wto\b|customs|duty|embargo/i.test(t))return'trade';
+  if(/oil|gas|energy|opec|brent|wti|pipeline|lng|nuclear|solar|wind power/i.test(t))return'energy';
   return'general';
 }
 
@@ -1992,15 +2008,29 @@ function _inferResolveBy(horizon){
 
 // ── Helper: extract named entities from prediction text ─────────
 function _extractEntities(text){
-  // Simple NER: capitalized words/phrases not at sentence start
+  const SKIP=new Set(['The','A','An','This','That','These','Those','Will','By','In','On','At','For','From','With','And','Or','But','If','When','After','Before','During','Within','Between','Among','Over','Under','Above','Below','Through','Against','Around','Beyond','Into','Onto','Upon','Across','Along','Near','Next','Last','First','Second','Third','New','Old','More','Less','Most','Least','Many','Few','Some','Any','All','Each','Every','Both','Either','Neither','Such','Same','Other','Another','Any','No','Not','Just','Also','Even','Still','Yet','Already','Soon','Now','Then','There','Here','Where','When','How','Why','What','Which','Who','Whose']);
   const entities=[];
   const words=text.split(/\s+/);
   words.forEach((w,i)=>{
-    if(i>0&&/^[A-Z][a-zA-Z]{2,}/.test(w)&&!/^(The|A|An|This|That|These|Those|Will|By|In|On|At|For|From|With|And|Or|But|If|When|After|Before|During)$/.test(w)){
-      entities.push(w.replace(/[^a-zA-Z]/g,''));
+    const clean=w.replace(/[^a-zA-Z]/g,'');
+    if(i>0&&clean.length>=3&&/^[A-Z]/.test(clean)&&!SKIP.has(clean)){
+      entities.push(clean);
     }
   });
-  return [...new Set(entities)].slice(0,5);
+  // Also extract multi-word proper nouns (consecutive capitalized words)
+  const multiWord=[];
+  let run=[];
+  words.forEach((w,i)=>{
+    const clean=w.replace(/[^a-zA-Z]/g,'');
+    if(i>0&&clean.length>=3&&/^[A-Z]/.test(clean)&&!SKIP.has(clean)){
+      run.push(clean);
+    }else{
+      if(run.length>=2)multiWord.push(run.join(' '));
+      run=[];
+    }
+  });
+  if(run.length>=2)multiWord.push(run.join(' '));
+  return [...new Set([...multiWord,...entities])].slice(0,6);
 }
 
 // Expose canonical API on window.SIG
@@ -5856,7 +5886,7 @@ function computeNMS(stories){
   // Ensure clusters are available for co-occurrence signal
   // Build inline if world sweep hasn't run yet (cold start)
   if(!_sweepClusters?.length&&stories.length>=5&&typeof buildNarrativeClusters==='function'){
-    try{_sweepClusters=buildNarrativeClusters(stories);}catch{}
+    try{_sweepClusters=buildNarrativeClusters(stories);buildNarrativeGraph(stories);}catch{}
   }
 
   // ── COMPUTE SIGNAL PER STORY ──────────────────────────────
@@ -6678,7 +6708,42 @@ function renderLabData(){
     ${renderBrierStats(brierStats)}
   `:`<div class="empty" style="padding:.5rem;">Resolve tracked predictions to see accuracy</div>`;
 
-  // Factor correlation — regime-filtered
+  // Source reliability display
+  const srEl=document.getElementById('sourceReliabilityDisplay');
+  if(srEl){
+    const sr=SIGNAL_STORE.sourceReliability;
+    const srEntries=Object.entries(sr).filter(([,v])=>v.total>=2).sort(([,a],[,b])=>b.total-a.total);
+    srEl.innerHTML=srEntries.length?srEntries.map(([src,v])=>{
+      const rate=Math.round(v.correct/v.total*100);
+      const color=rate>=70?'var(--green)':rate>=50?'var(--amber)':'var(--red)';
+      return`<div style="display:flex;align-items:center;gap:8px;margin-bottom:5px;">
+        <span style="font-size:9px;font-family:var(--mono);color:var(--t3);min-width:70px;text-transform:uppercase;">${src}</span>
+        <div style="flex:1;height:4px;background:var(--b1);border-radius:2px;overflow:hidden;">
+          <div style="width:${rate}%;height:100%;background:${color};border-radius:2px;"></div>
+        </div>
+        <span style="font-size:9px;font-family:var(--mono);color:${color};min-width:40px;">${rate}% (${v.total})</span>
+      </div>`;
+    }).join(''):`<div class="empty" style="padding:.5rem;font-size:10px;">Resolve predictions to build source track record</div>`;
+  }
+
+  // Prediction type distribution
+  const ptEl=document.getElementById('predTypeDisplay');
+  if(ptEl){
+    const typeCounts=preds.reduce((a,p)=>{const t=p.type||'general';a[t]=(a[t]||0)+1;return a;},{});
+    const total=preds.length||1;
+    const typeColors={macro:'var(--acc)',crypto:'var(--purple)',geopolitics:'var(--red)',earnings:'var(--green)',political:'var(--amber)',regulatory:'var(--teal)',health:'#ff6b9d',trade:'#ffa500',energy:'#90ee90',general:'var(--t3)'};
+    ptEl.innerHTML=Object.entries(typeCounts).sort(([,a],[,b])=>b-a).map(([type,count])=>{
+      const pct=Math.round(count/total*100);
+      const color=typeColors[type]||'var(--t2)';
+      return`<div style="display:flex;align-items:center;gap:8px;margin-bottom:4px;">
+        <span style="font-size:9px;font-family:var(--mono);color:${color};min-width:80px;text-transform:uppercase;">${type}</span>
+        <div style="flex:1;height:4px;background:var(--b1);border-radius:2px;overflow:hidden;">
+          <div style="width:${pct}%;height:100%;background:${color};border-radius:2px;opacity:.7;"></div>
+        </div>
+        <span style="font-size:9px;font-family:var(--mono);color:var(--t3);">${count}</span>
+      </div>`;
+    }).join('')||'<div class="empty" style="padding:.5rem;font-size:10px;">No predictions yet</div>';
+  }
   const allWithReturns=outcomes.filter(o=>o.r14d!==null&&o.nmsAtCapture!==null);
   // Save IC snapshot — deduplicated by captureId so safe to call on every render
   if(allWithReturns.length>=5){
@@ -8729,7 +8794,7 @@ function renderEventPredictions(forecasts){
 }
 
 function resolveForecast(id,correct){
-  const f=resolveUnifiedPrediction(id,correct,'');
+  const f=resolvePrediction(id,correct,''); // use canonical engine function
   if(f){
     renderForecastLog();
     renderLabData();
@@ -8896,6 +8961,54 @@ Return JSON array (same order):
     `${enriched.length} stories · ${_sweepClusters.length} clusters${surgeStr} · ${new Date().toLocaleTimeString()}`;
   renderWorldSweep();
   setTabDot('worldsweep','loaded');
+}
+
+// ── NARRATIVE GRAPH ─────────────────────────────────────────────
+// Builds causal entity co-occurrence graph across stories
+// Nodes: entities. Edges: co-occurrence weighted by NMS product.
+// Iran Strike → Oil Spike → Inflation → Fed Odds → Bond Selloff
+let _narrativeGraph={nodes:{},edges:{}};
+
+function buildNarrativeGraph(stories){
+  const graph={nodes:{},edges:{}};
+  stories.forEach(s=>{
+    const nms=(s.nms||0.5);
+    const entities=_extractEntities(s.headline||'');
+    const type=_inferPredictionType(s.headline||'');
+    // Add/update nodes
+    entities.forEach(e=>{
+      if(!graph.nodes[e])graph.nodes[e]={entity:e,mentions:0,totalNms:0,types:{}};
+      graph.nodes[e].mentions++;
+      graph.nodes[e].totalNms+=nms;
+      graph.nodes[e].types[type]=(graph.nodes[e].types[type]||0)+1;
+    });
+    // Add edges for entity co-occurrence within same story
+    for(let i=0;i<entities.length;i++){
+      for(let j=i+1;j<entities.length;j++){
+        const key=[entities[i],entities[j]].sort().join('→');
+        if(!graph.edges[key])graph.edges[key]={from:entities[i],to:entities[j],weight:0,count:0};
+        graph.edges[key].weight+=nms;
+        graph.edges[key].count++;
+      }
+    }
+  });
+  _narrativeGraph=graph;
+  // Store top edges for session
+  try{
+    const topEdges=Object.entries(graph.edges)
+      .sort(([,a],[,b])=>b.weight-a.weight).slice(0,20)
+      .map(([k,v])=>({...v,key:k,ts:Date.now()}));
+    localStorage.setItem('sig_narrative_graph_v1',JSON.stringify({ts:Date.now(),nodes:Object.keys(graph.nodes).length,edges:topEdges}));
+  }catch{}
+  return graph;
+}
+
+function getNarrativeGraph(){return _narrativeGraph;}
+
+// Expose on SIG
+if(window.SIG){
+  window.SIG.narrativeGraph=()=>_narrativeGraph;
+  window.SIG.topEdges=(n=10)=>Object.entries(_narrativeGraph.edges||{}).sort(([,a],[,b])=>b.weight-a.weight).slice(0,n).map(([k,v])=>`${v.from} ↔ ${v.to} (${v.count}x, NMS=${Math.round(v.weight*10)/10})`);
 }
 
 function buildNarrativeClusters(stories){
