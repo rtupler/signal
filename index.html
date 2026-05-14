@@ -10,8 +10,8 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="SIGNAL">
 <link rel="apple-touch-icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 180 180'%3E%3Crect width='180' height='180' rx='40' fill='%23080A0D'/%3E%3Ctext x='90' y='115' font-family='Georgia,serif' font-size='68' font-weight='700' fill='%2300C8FF' text-anchor='middle'%3ES%3C/text%3E%3Ccircle cx='138' cy='45' r='12' fill='%2300E676'/%3E%3C/svg%3E">
-<link rel="manifest" href="data:application/json,%7B%22name%22%3A%22SIGNAL+v65+%E2%80%94+Predictive+Intelligence%22%2C%22short_name%22%3A%22SIGNAL%22%2C%22description%22%3A%22Narrative+momentum+platform+for+M20+portfolio+signals%22%2C%22start_url%22%3A%22.%2F%22%2C%22display%22%3A%22standalone%22%2C%22background_color%22%3A%22%23080A0D%22%2C%22theme_color%22%3A%22%23080A0D%22%2C%22orientation%22%3A%22portrait-primary%22%2C%22icons%22%3A%5B%7B%22src%22%3A%22data%3Aimage%2Fsvg%2Bxml%2C%253Csvg+xmlns%3D'http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg'+viewBox%3D'0+0+512+512'%253E%253Crect+width%3D'512'+height%3D'512'+rx%3D'114'+fill%3D'%2523080A0D'%2F%253E%253Ctext+x%3D'256'+y%3D'340'+font-family%3D'Georgia%2Cserif'+font-size%3D'260'+font-weight%3D'700'+fill%3D'%252300C8FF'+text-anchor%3D'middle'%253ES%253C%2Ftext%253E%253Ccircle+cx%3D'400'+cy%3D'130'+r%3D'50'+fill%3D'%252300E676'%2F%253E%253C%2Fsvg%253E%22%2C%22sizes%22%3A%22512x512%22%2C%22type%22%3A%22image%2Fsvg%2Bxml%22%7D%5D%7D">
-<title>SIGNAL v65 — Predictive Intelligence</title>
+<link rel="manifest" href="data:application/json,%7B%22name%22%3A%22SIGNAL+v67+%E2%80%94+Predictive+Intelligence%22%2C%22short_name%22%3A%22SIGNAL%22%2C%22description%22%3A%22Narrative+momentum+platform+for+M20+portfolio+signals%22%2C%22start_url%22%3A%22.%2F%22%2C%22display%22%3A%22standalone%22%2C%22background_color%22%3A%22%23080A0D%22%2C%22theme_color%22%3A%22%23080A0D%22%2C%22orientation%22%3A%22portrait-primary%22%2C%22icons%22%3A%5B%7B%22src%22%3A%22data%3Aimage%2Fsvg%2Bxml%2C%253Csvg+xmlns%3D'http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg'+viewBox%3D'0+0+512+512'%253E%253Crect+width%3D'512'+height%3D'512'+rx%3D'114'+fill%3D'%2523080A0D'%2F%253E%253Ctext+x%3D'256'+y%3D'340'+font-family%3D'Georgia%2Cserif'+font-size%3D'260'+font-weight%3D'700'+fill%3D'%252300C8FF'+text-anchor%3D'middle'%253ES%253C%2Ftext%253E%253Ccircle+cx%3D'400'+cy%3D'130'+r%3D'50'+fill%3D'%252300E676'%2F%253E%253C%2Fsvg%253E%22%2C%22sizes%22%3A%22512x512%22%2C%22type%22%3A%22image%2Fsvg%2Bxml%22%7D%5D%7D">
+<title>SIGNAL v67 — Predictive Intelligence</title>
 <link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;500;600;700;800&family=Instrument+Serif:ital@0;1&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
 <!-- Sentiment: AFINN lexicon via sentiment.js -->
 <!-- Sentiment: try multiple CDN sources with inline fallback -->
@@ -1018,7 +1018,7 @@ button:focus-visible,a:focus-visible{outline:2px solid var(--acc);outline-offset
 <div class="gate" id="gate">
   <div class="gate-box">
     <div class="gate-eyebrow">Predictive Intelligence Platform</div>
-    <div class="gate-logo">SIGNAL<span class="gate-v">v65</span></div>
+    <div class="gate-logo">SIGNAL<span class="gate-v">v67</span></div>
     <div class="gate-tagline">Narrative Momentum Score · NMI composite · <strong>Velocity-weighted event prediction</strong> · KL-edge calibration · Self-calibrating Factor Lab</div>
     <div class="gate-sep"></div>
     <div class="gate-label">Gemini API Key <span style="color:rgba(255,255,255,.3);font-weight:400;letter-spacing:0;text-transform:none;">(aistudio.google.com — free)</span></div>
@@ -1355,6 +1355,12 @@ button:focus-visible,a:focus-visible{outline:2px solid var(--acc);outline-offset
       </div>
 
       <!-- SUMMARY STATS -->
+      <!-- MODEL RELIABILITY — core commercial value -->
+      <div class="lab-card mb-5" style="border-left:3px solid var(--acc);">
+        <div class="lab-hd">Model Reliability <span class="lab-hd-act" style="font-weight:400;font-size:9px;">when SIGNAL says 70%, is it right ~70% of the time?</span></div>
+        <div id="modelReliabilityDisplay"><div class="empty" style="padding:.5rem;font-size:10px;">Resolve predictions to build reliability data</div></div>
+      </div>
+
       <div class="lab-grid" id="labStats">
         <div class="lab-card">
           <div class="lab-hd">Prediction Accuracy</div>
@@ -2569,11 +2575,15 @@ function trackPrediction(market){
   renderLabData();
 }
 
-function resolvePrediction(id,correct,actual){
-  resolveUnifiedPrediction(id,correct,actual||'');
+// UI wrapper — routes through canonical resolvePrediction (line ~2056)
+// Adds toast + re-render without overwriting calibration/Brier/history logic
+function resolvePrediction_ui(id,correct,actual){
+  const saved=resolvePrediction(id,!!correct,actual||'');
+  if(!saved)return null;
   renderLabData();
   if(typeof renderForecastLog==='function')renderForecastLog();
   toast(correct?'Prediction correct! +1 accuracy':'Prediction wrong. Logged.',correct?'success':'warning',2500);
+  return saved;
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -3990,10 +4000,89 @@ function pruneAllStorage(){
   if(freed>0)console.log(`pruneAllStorage: pruned ${freed} keys`);
 }
 
+function renderDiagnosticsBadge(checks){
+  try{
+    let badge=document.getElementById('diagBadge');
+    const hasFnIssues=checks.duplicateFunctions!=='none';
+    const hasSampleWarning=checks.sampleDiscipline!=='thresholds met';
+    const warn=hasFnIssues||!checks.localStorage||!checks.storeLoaded||!checks.canonicalResolver||checks.loadLocked;
+    const status=warn?'DIAG WARN':hasSampleWarning?'DIAG OK*':'DIAG OK';
+    if(!badge){
+      badge=document.createElement('span');
+      badge.id='diagBadge';
+      badge.style.cssText='display:inline-flex;align-items:center;gap:4px;font-size:8px;font-weight:800;font-family:var(--mono);padding:1px 6px;border-radius:3px;margin-left:6px;letter-spacing:.04em;cursor:default;';
+      const bar=document.getElementById('dstatusBar')||document.querySelector('.dstatus')||document.querySelector('.hright');
+      if(bar)bar.appendChild(badge);
+    }
+    badge.textContent=status;
+    const fnLines=checks.functionCounts?Object.entries(checks.functionCounts).map(([fn,n])=>`  ${fn}: ${n}`).join('\n'):'';
+    badge.title=[
+      `version: ${checks.version}`,
+      `proxy: ${checks.proxyBase}`,
+      `predictions: ${checks.predictions} (${checks.resolved} resolved)`,
+      `calibration buckets: ${checks.calibrationBuckets}`,
+      `duplicate functions: ${checks.duplicateFunctions}`,
+      `canonical resolver: ${checks.canonicalResolver?'yes':'NO — CHECK'}`,
+      `load locked: ${checks.loadLocked?'YES — BUG':'no'}`,
+      `sample discipline: ${checks.sampleDiscipline}`,
+      `function counts:\n${fnLines}`
+    ].join('\n');
+    badge.style.color=warn?'var(--amber)':hasSampleWarning?'var(--acc)':'var(--green)';
+    badge.style.background=warn?'rgba(255,179,0,.08)':hasSampleWarning?'rgba(0,200,255,.08)':'rgba(0,230,118,.08)';
+    badge.style.border=warn?'1px solid rgba(255,179,0,.25)':hasSampleWarning?'1px solid rgba(0,200,255,.2)':'1px solid rgba(0,230,118,.25)';
+  }catch(e){console.warn('[Diagnostics badge]',e.message);}
+}
+
+function bootDiagnostics(){
+  const defs=[];
+  const src=[...document.querySelectorAll('script:not([src])')].map(s=>s.textContent||'').join('\n');
+  // Scan all critical functions for duplicates
+  const criticalFns=['loadAll','boot','resolvePrediction','resolvePrediction_ui','renderLabData','proxyFetch','addPrediction'];
+  const functionCounts=Object.fromEntries(
+    criticalFns.map(fn=>[ fn, (src.match(new RegExp('^function\\s+'+fn+'\\b','gm'))||[]).length ])
+  );
+  // Expected counts: all should be 1 except resolvePrediction_ui which must be exactly 1
+  const expectedOne=['loadAll','boot','resolvePrediction','resolvePrediction_ui','renderLabData','proxyFetch','addPrediction'];
+  expectedOne.forEach(fn=>{
+    const n=functionCounts[fn]||0;
+    if(n===0)defs.push(fn+' MISSING');
+    else if(n>1)defs.push(fn+' x'+n+' DUPLICATE');
+  });
+  // Sample size discipline — warn until thresholds met
+  const resolvedCount=SIGNAL_STORE.predictions.filter(p=>p.resolved).length;
+  const outcomes=JSON.parse(localStorage.getItem('lab_outcomes')||'[]');
+  const sampleWarnings=[];
+  if(resolvedCount<50)sampleWarnings.push(`predictions ${resolvedCount}/50`);
+  if(outcomes.length<30)sampleWarnings.push(`price captures ${outcomes.length}/30`);
+  const checks={
+    version:document.querySelector('.gate-v')?.textContent||'unknown',
+    localStorage:!!window.localStorage,
+    proxyBase:_getProxyBase()||'(none — direct fetch)',
+    predictions:SIGNAL_STORE.predictions.length,
+    resolved:resolvedCount,
+    calibrationBuckets:Object.keys(SIGNAL_STORE.calibration).filter(k=>SIGNAL_STORE.calibration[k].total>0).length,
+    functionCounts,
+    duplicateFunctions:defs.length?defs.join(' | '):'none',
+    canonicalResolver:(functionCounts.resolvePrediction===1&&functionCounts.resolvePrediction_ui===1),
+    loadLocked:!!_loadInProgress,
+    historyEntries:SIGNAL_STORE.history.length,
+    sampleDiscipline:sampleWarnings.length?sampleWarnings.join(', '):'thresholds met',
+    m20Status:'read-only audit until calibration proven',
+    storeLoaded:typeof SIGNAL_STORE!=='undefined'
+  };
+  window.SIGNAL_DIAGNOSTICS=checks;
+  console.table(checks);
+  if(defs.length)console.warn('[SIGNAL] Function issues:',defs);
+  if(sampleWarnings.length)console.info('[SIGNAL] Sample size:',sampleWarnings.join(', '),'— do not trust signal performance yet');
+  renderDiagnosticsBadge(checks);
+  return checks;
+}
+
 function boot(){
   pruneAllStorage();
   _loadStore(); // initialize SIGNAL_STORE from localStorage
   _applyConfidenceDecay(); // expire predictions past resolveBy
+  setTimeout(bootDiagnostics,600); // diagnostic check after store loads
   // Show cached standing Q answers immediately
   try{
     const sqAnswers=JSON.parse(localStorage.getItem(_SQ_ANSWERS_KEY)||'{}');
@@ -6847,7 +6936,7 @@ function openResolveById(mid){openResolve(mid);}
 function openResolvePred(id){
   const correct=confirm('Did the predicted YES/event outcome happen? OK = YES/CORRECT, Cancel = NO/WRONG');
   const actual=prompt('What actually happened? (brief description)')||'';
-  resolvePrediction(id,correct,actual);
+  resolvePrediction_ui(id,correct,actual);
 }
 function openResolve(marketId){
   const p=getUnifiedPredictions().find(x=>String(x.marketId)===String(marketId)||String(x.id)===String(marketId));
@@ -7146,7 +7235,60 @@ function renderLabData(){
     ${renderBrierStats(brierStats)}
   `:`<div class="empty" style="padding:.5rem;">Resolve tracked predictions to see accuracy</div>`;
 
-  // Source reliability display
+  // Model Reliability panel — core commercial value
+  const mrEl=document.getElementById('modelReliabilityDisplay');
+  if(mrEl){
+    const audit=typeof SIG!=='undefined'?SIG.audit():{calibration:{},sourceReliability:{}};
+    const cal=audit.calibration||{};
+    const calEntries=Object.entries(cal).filter(([,v])=>v.total>0).sort(([a],[b])=>+a-+b);
+    const overallBrier=resolved.length?computeBrierStats(preds)?.brier:null;
+    // IC at 14d from allWithReturns
+    const ic14=allWithReturns.length>=5?computeIC(allWithReturns,'r14d'):{ic:null};
+    const xrOutcomes=labGet('outcomes').filter(o=>o.xr14d!=null&&o.nmsAtCapture!=null);
+    const icXR=xrOutcomes.length>=5?computeIC(xrOutcomes,'xr14d'):{ic:null};
+    const sampleWarning=resolved.length<20;
+    if(!calEntries.length){
+      mrEl.innerHTML=`<div class="empty" style="padding:.5rem;font-size:10px;">Need resolved predictions across confidence buckets (50%, 60%, 70%, 80%, 90%)</div>`;
+    }else{
+      mrEl.innerHTML=`
+        ${sampleWarning?`<div style="font-size:9px;color:var(--amber);margin-bottom:.5rem;">⚠ Small sample (n=${resolved.length}) — need 50+ resolved for reliable calibration</div>`:''}
+        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:6px;margin-bottom:.6rem;">
+          <div style="background:var(--s1);border-radius:4px;padding:.4rem .6rem;">
+            <div style="font-size:8px;color:var(--t3);font-weight:700;letter-spacing:.06em;margin-bottom:2px;">BRIER SCORE</div>
+            <div style="font-size:16px;font-weight:800;font-family:var(--mono);color:${overallBrier!=null?(overallBrier<=0.1?'var(--green)':overallBrier<=0.2?'var(--amber)':'var(--red)'):'var(--t3)'};">${overallBrier!=null?overallBrier:'—'}</div>
+            <div style="font-size:8px;color:var(--t3);">0=perfect · 0.25=coin flip</div>
+          </div>
+          <div style="background:var(--s1);border-radius:4px;padding:.4rem .6rem;">
+            <div style="font-size:8px;color:var(--t3);font-weight:700;letter-spacing:.06em;margin-bottom:2px;">IC 14D</div>
+            <div style="font-size:16px;font-weight:800;font-family:var(--mono);color:${ic14.ic!=null?(ic14.ic>=0.05?'var(--green)':ic14.ic>0?'var(--amber)':'var(--red)'):'var(--t3)'};">${ic14.ic!=null?Math.round(ic14.ic*1000)/1000:'—'}</div>
+            <div style="font-size:8px;color:var(--t3);">threshold &gt;0.05</div>
+          </div>
+          <div style="background:var(--s1);border-radius:4px;padding:.4rem .6rem;">
+            <div style="font-size:8px;color:var(--t3);font-weight:700;letter-spacing:.06em;margin-bottom:2px;">EXCESS RETURN IC</div>
+            <div style="font-size:16px;font-weight:800;font-family:var(--mono);color:${icXR.ic!=null?(icXR.ic>=0.05?'var(--green)':icXR.ic>0?'var(--amber)':'var(--red)'):'var(--t3)'};">${icXR.ic!=null?Math.round(icXR.ic*1000)/1000:'—'}</div>
+            <div style="font-size:8px;color:var(--t3);">NMS vs QQQ-adj return</div>
+          </div>
+        </div>
+        <div style="font-size:9px;color:var(--t3);margin-bottom:.3rem;font-weight:700;">Calibration by bucket — stated confidence vs actual hit rate</div>
+        ${calEntries.map(([b,v])=>{
+          const predicted=+b;
+          const actual=Math.round(v.correct/v.total*100);
+          const diff=actual-predicted;
+          const diffColor=Math.abs(diff)<=10?'var(--green)':Math.abs(diff)<=20?'var(--amber)':'var(--red)';
+          return`<div style="display:grid;grid-template-columns:32px 1fr 40px 48px 90px;align-items:center;gap:5px;margin-bottom:4px;">
+            <span style="font-size:9px;font-family:var(--mono);color:var(--t3);">${predicted}%</span>
+            <div style="height:4px;background:var(--b1);border-radius:2px;position:relative;overflow:hidden;">
+              <div style="position:absolute;left:0;top:0;width:${predicted}%;height:100%;background:var(--b2);"></div>
+              <div style="position:absolute;left:0;top:0;width:${actual}%;height:100%;background:${diffColor};opacity:.8;"></div>
+            </div>
+            <span style="font-size:9px;font-family:var(--mono);color:var(--t2);text-align:right;">${actual}%</span>
+            <span style="font-size:9px;font-family:var(--mono);color:${diffColor};text-align:right;">${diff>0?'+':''}${diff}%</span>
+            <span style="font-size:8px;color:${diffColor};">${Math.abs(diff)<=10?'✓ calibrated':diff>0?'↑ under':' ↓ over'} (${v.total})</span>
+          </div>`;
+        }).join('')}
+      `;
+    }
+  }
   const srEl=document.getElementById('sourceReliabilityDisplay');
   if(srEl){
     const sr=SIGNAL_STORE.sourceReliability;
@@ -9351,11 +9493,10 @@ function renderEventPredictions(forecasts){
 }
 
 function resolveForecast(id,correct){
-  const f=resolvePrediction(id,correct,''); // use canonical engine function
+  const f=resolvePrediction_ui(id,correct,'');
   if(f){
     renderForecastLog();
     renderLabData();
-    toast(correct?'Forecast correct! Logged.':'Forecast wrong. Logged.',correct?'success':'warning',2500);
   }
 }
 
@@ -10300,7 +10441,16 @@ async function loadAll(force=false){
   // Check cache first
   if(!force){
     const c=cGet('stories_'+currentTopic,CACHE.stories);
-    if(c){renderFeed(c);loadMarkets(false);loadTrends();return;}
+    if(c){
+      try{
+        renderFeed(c);
+        Promise.resolve(loadMarkets(false)).catch(()=>{});
+        Promise.resolve(loadTrends()).catch(()=>{});
+      }finally{
+        _loadInProgress=false;
+      }
+      return;
+    }
   }
 
   btn.disabled=true;ico.classList.add('spinning');
