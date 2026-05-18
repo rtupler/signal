@@ -584,6 +584,7 @@ h3 .caps-hi, strong .caps-hi{ color:inherit; }
       <div class="ch" style="background:linear-gradient(90deg,var(--s2),rgba(255,215,0,.04));border-bottom-color:rgba(255,215,0,.15);">
         <span>🩻</span><span class="ct" style="color:var(--gold);">Clinical Pearl</span>
         <span class="bdg bgold" id="ck-bclin">--</span>
+        <button class="ref btn-flush" onclick="runClinical(true)" style="margin-left:6px;">↺</button>
       </div>
       <div class="cb out" id="ck-clin">
         <div style="font-family:var(--mono);font-size:8px;color:var(--dim);">Auto-generates on load.</div>
@@ -2104,6 +2105,15 @@ h3 .caps-hi, strong .caps-hi{ color:inherit; }
 async function runAiPearls(){
   const el=document.getElementById('out-tips-am');
   if(!el)return;
+  // Check daily cache
+  const cached = getDailyCache('ai_pearls');
+  if(cached){
+    renderTechCards(cached,'out-tips-am');
+    renderTechCards(cached,'am-tips');
+    badge('btips','2 PEARLS','bdg bg');
+    badge('am-btips','2 PEARLS','bdg bg');
+    return;
+  }
   el.innerHTML='<div class="sk-wrap"><div class="sk"></div><div class="sk w7"></div></div>';
   try{
     const r=await api(
@@ -2115,7 +2125,7 @@ async function runAiPearls(){
     renderTechCards(r,'am-tips');
     badge('btips','2 PEARLS','bdg bg');
     badge('am-btips','2 PEARLS','bdg bg');
-
+    setDailyCache('ai_pearls', r);
   }catch(e){err('out-tips-am',e.message);}
 }
 // ════ GOOGLE ALERTS — reads real Gmail alerts via Anthropic API + Gmail MCP ════
@@ -2656,8 +2666,8 @@ setInterval(()=>{
 }, 15000);
 
 // ── API wrapper — all calls go through APIQueue ──
-async function api(system, user, useSearch=true, maxTokens=null, model=null){
-  return APIQueue.enqueue(`api:${system.slice(0,30)}`, () => _apiDirect(system, user, useSearch, maxTokens, model));
+async function api(system, user, useSearch=true, maxTokens=null, model=null, timeoutMs=null){
+  return APIQueue.enqueue(`api:${system.slice(0,30)}`, () => _apiDirect(system, user, useSearch, maxTokens, model), {timeoutMs: timeoutMs||60000});
 }
 
 // ── Internal direct API call (bypasses queue — use only via api()) ──
@@ -3374,9 +3384,12 @@ async function _loadCockpitCalendarImpl(){
   if(ph) ph.style.display='none';
 
   const todayStr = new Date().toDateString();
+  const cutoff = new Date(); cutoff.setDate(cutoff.getDate() + 2); // 2 days ahead
   const byDay = {};
   for(const evt of data.events){
-    const key = new Date(evt.start).toDateString();
+    const evtDate = new Date(evt.start);
+    if(evtDate > cutoff) continue; // skip events beyond 2 days
+    const key = evtDate.toDateString();
     if(!byDay[key]) byDay[key]=[];
     byDay[key].push(evt);
   }
@@ -3796,6 +3809,13 @@ async function runMorningBrief(){
 }
 async function _runMorningBriefImpl(){
   const ps=getTodaysPundits().slice(0,3);
+
+  // ── Restore Howell and News from daily cache if available ──
+  const cachedHowell = getDailyCache('howell');
+  const cachedNews   = getDailyCache('morning_news');
+  if(cachedHowell){ render(cachedHowell,'out-howell'); render(cachedHowell,'ck-how'); badge('bhow','💧 CACHED','bdg bgold'); badge('ck-bhow','💧 CACHED','bdg bgold'); }
+  if(cachedNews)  { render(cachedNews,'out-news');     render(cachedNews,'ck-news');   badge('bnews','📰 CACHED','bdg brd'); badge('ck-bnews','📰 CACHED','bdg brd'); }
+
   try{
     const r=await api('Daily briefing assistant. Search for live data. Be concise. Use the EXACT section headers shown — no emoji in headers, no sub-headers. Return ALL sections completely — do not truncate. CRITICAL: Use ONLY the market data provided in the MARKET CONTEXT below for prices and values — do NOT use training data or memory for any numeric values. If a value is not in the context, say "N/A" rather than estimating.',
       `${TODAY}.\n\nMARKET CONTEXT:\n${MKT_CTX}\n\nReturn ALL 5 sections with EXACTLY these headers (copy them verbatim):\n\n## WEATHER\nNew Orleans 4-day forecast. Format: Mon ☀️ 72/58°F Clear. Tue 🌧️ 68/55°F Rain. Wed ⛅ 70/56°F Partly cloudy. Thu ☀️ 74/60°F Clear.\n\n## MARKETS\n5 lines — MUST include signed % change for each. Format exactly:
@@ -3902,11 +3922,12 @@ Gold: $3,050 ▲ +0.18%\n\n## HOWELL\n5 bullets on Howell liquidity cycle: curre
       badge('bmkt','📈 LIVE','bdg bg');badge('ck-bmkt','📈 LIVE','bdg bg');
       updateMktCtxFromMarkets(markets);
     }else err('out-markets','No market data');
-    if(howell){render(howell,'out-howell');render(howell,'ck-how');badge('bhow','💧 LIVE','bdg bgold');badge('ck-bhow','💧 LIVE','bdg bgold');const ph=howell.match(/Speculation|Turbulence|Calm|Rebound/i);if(ph)setPhase(ph[0]);}
+    if(howell){render(howell,'out-howell');render(howell,'ck-how');badge('bhow','💧 LIVE','bdg bgold');badge('ck-bhow','💧 LIVE','bdg bgold');const ph=howell.match(/Speculation|Turbulence|Calm|Rebound/i);if(ph)setPhase(ph[0]);setDailyCache('howell',howell);}
     if(news){
       render(news,'out-news');
       render(news,'ck-news');
       badge('bnews','📰 LIVE','bdg brd');badge('ck-bnews','📰 LIVE','bdg brd');
+      setDailyCache('morning_news',news);
     }
     if(tips){
       renderTechCards(tips,'out-tips-am');
@@ -4171,8 +4192,57 @@ function initPunditUI(){
 
 // ── Per-pundit session cache (cleared on ↺ refresh) ──
 const PCACHE={};
+const PCACHE_LS_KEY = 'rt_pundit_cache_v2';
+const PCACHE_DATE   = new Date().toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'});
 
-// ── Live pundit summary — built after cards load, fed to Strategist ──
+// Load today's cached pundit calls from localStorage into PCACHE
+function loadPunditCache(){
+  try{
+    const stored = JSON.parse(localStorage.getItem(PCACHE_LS_KEY)||'{}');
+    if(stored.date === PCACHE_DATE && stored.data){
+      Object.assign(PCACHE, stored.data);
+      console.log(`[PunditCache] Loaded ${Object.keys(stored.data).length} cached calls for ${PCACHE_DATE}`);
+    }
+  }catch(e){ console.warn('[PunditCache] Load failed:', e.message); }
+}
+
+function savePunditCache(){
+  try{
+    localStorage.setItem(PCACHE_LS_KEY, JSON.stringify({date: PCACHE_DATE, data: PCACHE}));
+  }catch(e){ console.warn('[PunditCache] Save failed:', e.message); }
+}
+
+// Load on startup
+loadPunditCache();
+
+// ── Shared daily cache helper ──
+// Caches any string value by key, keyed to today's date.
+// Returns cached value if same day, null otherwise.
+const DAILY_CACHE_PREFIX = 'rt_daily_';
+const DAILY_CACHE_DATE   = new Date().toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'});
+
+function getDailyCache(key){
+  try{
+    const stored = JSON.parse(localStorage.getItem(DAILY_CACHE_PREFIX+key)||'null');
+    if(stored?.date===DAILY_CACHE_DATE && stored?.value){
+      console.log(`[DailyCache] HIT: ${key}`);
+      return stored.value;
+    }
+  }catch{}
+  return null;
+}
+
+function setDailyCache(key, value){
+  try{
+    localStorage.setItem(DAILY_CACHE_PREFIX+key, JSON.stringify({date:DAILY_CACHE_DATE, value}));
+  }catch(e){ console.warn(`[DailyCache] Save failed for ${key}:`, e.message); }
+}
+
+function clearDailyCache(){
+  const keys = Object.keys(localStorage).filter(k=>k.startsWith(DAILY_CACHE_PREFIX));
+  keys.forEach(k=>localStorage.removeItem(k));
+  console.log(`[DailyCache] Cleared ${keys.length} entries`);
+}
 // PUNDIT_SUMMARY now lives in APP_STATE.punditSummary — shim for existing call sites
 Object.defineProperty(window, 'PUNDIT_SUMMARY', {
   get(){ return APP_STATE.punditSummary; },
@@ -4206,6 +4276,7 @@ WHY: [1 sentence — thesis or relevance to current market context]`,
     true
   );
   PCACHE[p.n] = r;
+  savePunditCache();
   return r;
 }
 
@@ -4526,7 +4597,7 @@ Return ONLY this JSON object, filled with your analysis. No other text.
 }
 
 ATTRIBUTION RULES: attribution values must sum to the total score (positive = bullish contribution, negative = bearish drag). data_completeness is count of signals with live data (max 6). missing_signals lists any signals not available today.`,
-      false, 6000, GEMINI_MODEL_PRO
+      false, 6000, GEMINI_MODEL_PRO, 90000  // 90s timeout for PRO model
     );
 
     // ── Parse via named function ──
@@ -4674,7 +4745,37 @@ ATTRIBUTION RULES: attribution values must sum to the total score (positive = bu
         if(lastScores)scoreUI(lastScores);
       } else { err('out-strat',e.message); }
     }catch{ err('out-strat',e.message); }
-    if(regEl){regEl.textContent='Strategist error — retry';regEl.style.color='var(--red)';regEl.style.fontSize='';}
+    console.warn('[Strategist] PRO model failed:', e.message, '— trying Flash-Lite fallback');
+    // ── Flash-Lite fallback with simplified schema ──
+    try{
+      const fallbackR = await api(
+        'Senior macro strategist. Return ONLY valid JSON. Be decisive.',
+        `${TODAY}. Market data: ${MKT_CTX}\n\nReturn ONLY this minimal JSON:\n{"regime":"one sentence regime label","stance":"RISK ON or RISK OFF or NEUTRAL","add":"asset to add","reduce":"asset to reduce","scores":{"liq":40,"cred":40,"brd":30,"btc":25,"sent":45},"decisionRationale":"2 sentences","confidence":60}`,
+        false, 1500, GEMINI_MODEL_FAST, 45000
+      );
+      const fallbackJ = parseStrategistJSON(fallbackR);
+      if(fallbackJ){
+        console.log('[Strategist] Flash-Lite fallback succeeded');
+        if(regEl){regEl.textContent=fallbackJ.regime||'Fallback synthesis';regEl.style.color='var(--gold)';regEl.style.fontSize='';}
+        scoreUI(fallbackJ.scores);
+        const stEl=document.getElementById('out-strat');
+        if(stEl)stEl.innerHTML=`<div style="font-family:var(--mono);font-size:9px;color:var(--gold);padding:6px;background:rgba(255,215,0,.06);border-radius:3px;margin-bottom:8px;">⚡ Flash-Lite synthesis — RE-SYNTHESIZE for full analysis</div><div style="font-size:12px;line-height:1.6;">${fallbackJ.decisionRationale||''}</div>`;
+        const stanceEl=document.getElementById('dec-stance-val');
+        if(stanceEl)stanceEl.textContent=(fallbackJ.stance||'NEUTRAL').replace('RISK ','');
+      } else { throw new Error('Fallback parse failed'); }
+    }catch(fe){
+      try{
+        const last=JSON.parse(localStorage.getItem('rt_last_strat_v1')||'null');
+        if(last&&last.j){
+          const age=Math.round((Date.now()-last.ts)/60000);
+          const el=document.getElementById('out-strat');
+          if(el)el.innerHTML=`<div style="font-family:var(--mono);font-size:9px;color:var(--gold);padding:6px;background:rgba(255,215,0,.06);border-radius:3px;">⚠ Cached from ${age}m ago — ${e.message}</div>`;
+          const lastScores=JSON.parse(localStorage.getItem('rt_last_scores_v1')||'null');
+          if(lastScores)scoreUI(lastScores);
+        } else { err('out-strat',e.message); }
+      }catch{ err('out-strat',e.message); }
+      if(regEl){regEl.textContent='Strategist error — retry';regEl.style.color='var(--red)';regEl.style.fontSize='';}
+    }
   }
   ld('btn-strat',false);
 }
@@ -5000,8 +5101,17 @@ Memorable hook: [One sentence that makes this stick — analogy, mnemonic, or co
   ld('btn-teaching',false);
 }
 
-async function runClinical(){
+async function runClinical(forceFresh=false){
   ld('btn-clin',true);updateDedupUI();
+  // Check daily cache first (skip if force refresh)
+  const clinCached = forceFresh ? null : getDailyCache('clinical_pearl');
+  if(clinCached){
+    render(clinCached,'out-clin');
+    const ckClin=document.getElementById('ck-clin'); if(ckClin) ckClin.innerHTML=clinCached;
+    badge('ck-bclin','CACHED','bdg bgold');
+    ld('btn-clin',false);
+    return;
+  }
   // Immediate skeleton so user sees activity
   const clinOut = document.getElementById('out-clin');
   if(clinOut) clinOut.innerHTML = sk()+sk()+sk();
@@ -5016,8 +5126,7 @@ async function runClinical(){
     const r=await api('You are an expert MSK radiologist training a colleague to develop expert-level pattern recognition. Every pearl must build the perceptual and cognitive skills of an expert reader. RULES: (1) Cite only 2022-2026 papers. If none: "Source: [Journal], 2024 (recent literature)". (2) Approved journals: Seminars in Musculoskeletal Radiology, Seminars in CT and MRI, MRI Clinics of North America, Radiologic Clinics of North America, Radiographics (RSNA), American Journal of Sports Medicine, Orthopaedic Journal of Sports Medicine, Aspetar, Radiology (RSNA). (3) STRICT zero-repeat — never reuse any topic, arbitrator, or threshold from the exclusion list. (4) Thresholds must be specific and numeric. (5) NO sequences, NO modalities, NO views — findings and anatomy only.',
       `${TODAY}.\nEXCLUDED:\n${excl||'(First session.)'}\n${bsInstr}\n\n3 fresh clinical pearls. DIFFERENT body regions. NO sequences, NO modalities, NO views — anatomy and findings only.\n\nFormat exactly like this:\n\n**PEARL [N]: [FINDING NAME IN CAPS]**\nConcept: [What this finding IS — one sentence that anchors the pattern in anatomy and pathophysiology, no imaging terms]\nArbitrator: [A memorable NAMED decision criterion, e.g. "The Retrocalcaneal Pressure Arbitrator" — the single thing that forces a call]\nThreshold: [One precise numeric cutoff with units and direction of abnormality]\nTeaching: [The clinical significance — what this finding means and what changes in management. Pure clinical teaching only.]\nTrap: [The single cognitive error that causes experts to miss this — one sentence, perceptual or cognitive, not a protocol issue]\nViewbox Tip: [The gestalt — what your eye locks onto before you measure. Pure perceptual pattern. No imaging terms.]\nSource: [Journal], [Author] et al., [Year 2022-2026]`,true, 3500, GEMINI_MODEL_PRO);
     render(r,'out-clin');
-
-    // Auto-inject Radiopaedia links
+    setDailyCache('clinical_pearl', r);
     const clinEl=document.getElementById('out-clin');
     if(clinEl){
       const topics=(r.match(/\*\*PEARL \d+:\s*([^*\n]+)\*\*/g)||[]).map(m=>m.replace(/\*\*PEARL \d+:\s*/,'').replace(/\*\*/g,'').trim());
@@ -5804,6 +5913,23 @@ function exportLog(){const logs=getLogs();if(!logs.length){alert('No entries yet
 // ════ CNBC SHOWS — Yesterday's content via AI search ════
 
 const SHOWS_CACHE = {};
+const SHOWS_LS_KEY  = 'rt_cnbc_shows_v2';
+const SHOWS_LS_DATE = new Date().toLocaleDateString('en-US',{weekday:'short',month:'short',day:'numeric'});
+
+// Load today's cached shows from localStorage
+(function loadShowsCache(){
+  try{
+    const stored = JSON.parse(localStorage.getItem(SHOWS_LS_KEY)||'{}');
+    if(stored.date===SHOWS_LS_DATE && stored.data){
+      Object.assign(SHOWS_CACHE, stored.data);
+      console.log(`[CNBCCache] Loaded ${Object.keys(stored.data).length} shows for ${SHOWS_LS_DATE}`);
+    }
+  }catch{}
+})();
+
+function saveShowsCache(){
+  try{ localStorage.setItem(SHOWS_LS_KEY, JSON.stringify({date:SHOWS_LS_DATE, data:SHOWS_CACHE})); }catch{}
+}
 
 // Yesterday's date string for search queries
 function getYesterday(){
@@ -5915,6 +6041,7 @@ Include price targets where mentioned. Include at least 3-5 tickers. If explicit
     true
   );
   SHOWS_CACHE[cfg.key] = r;
+  saveShowsCache();
   return r;
 }
 
@@ -5976,6 +6103,7 @@ async function buildShowsConsensus(results){
 
 async function reloadShows(){
   Object.keys(SHOWS_CACHE).forEach(k=>delete SHOWS_CACHE[k]);
+  localStorage.removeItem(SHOWS_LS_KEY);
   SHOW_CONFIGS.forEach(cfg=>{const el=document.getElementById(cfg.out);if(el)el.innerHTML='<div class="sk-wrap"><div class="sk"></div><div class="sk w7"></div></div>';badge(cfg.badge,'--','bdg bo');});
   const ce=document.getElementById('out-shows-consensus');if(ce)ce.innerHTML='';
   badge('shows-consensus-badge','PENDING','bdg bo');
@@ -7222,6 +7350,8 @@ async function reloadAll(){
   Object.keys(loadedTabs).forEach(k=>delete loadedTabs[k]);
   // Clear per-pundit cache so fresh searches run
   Object.keys(PCACHE).forEach(k=>delete PCACHE[k]);
+  localStorage.removeItem(PCACHE_LS_KEY);
+  clearDailyCache();
   Object.keys(SHOWS_CACHE).forEach(k=>delete SHOWS_CACHE[k]);
   PUNDIT_SUMMARY = ''; // reset so stale summary doesn't bleed into next Strategist
   // Reset pundit grid to skeletons
