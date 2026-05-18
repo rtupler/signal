@@ -2568,11 +2568,13 @@ const APIQueue = (() => {
     } catch (e) {
       const dur = Date.now()-t0;
       const is429 = e.message.includes('429')||e.message.includes('quota')||e.message.includes('RESOURCE_EXHAUSTED');
-      const maxRetries = item.maxRetries ?? (is429 ? 3 : 1);
+      const is503 = e.message.includes('503')||e.message.includes('high demand')||e.message.includes('temporarily');
+      const isRetryable = is429 || is503;
+      const maxRetries = item.maxRetries ?? (isRetryable ? 3 : 1);
       if (item.retries < maxRetries) {
         item.retries++;
         telemetry.totalRetries++;
-        const backoff = is429 ? item.retries*8000 : 3000;
+        const backoff = is429 ? item.retries*8000 : is503 ? item.retries*15000 : 3000;
         console.warn(`[APIQueue] "${item.name}" retry ${item.retries}/${maxRetries} in ${backoff/1000}s — ${e.message}`);
         pushHistory(item.name, dur, `RETRY${item.retries}`);
         await new Promise(r=>setTimeout(r,backoff));
@@ -3287,6 +3289,58 @@ function fmtFred(s,value){
 // Direct FRED API fetch removed — CORS-blocked from browser.
 // FRED data flows: Apps Script → Google Sheet → brief (CORS-free)
 // Fallback: Gemini web search estimate via fetchMacroEstimateViaAI()
+
+// ── Public wrappers ──
+async function loadFredData(){ return APP_STATE.dedupe('loadFredData', _loadFredDataImpl); }
+async function loadCockpitCalendar(){ return _loadCockpitCalendarImpl(); }
+
+async function _loadCockpitCalendarImpl(){
+  const sheet = await fetchBriefingSheet();
+  const data  = sheet?.calendar;
+  const el    = document.getElementById('ck-cal-events');
+  const ph    = document.getElementById('ck-cal-placeholder');
+  const badge = document.getElementById('ck-cal-badge');
+
+  if(!data?.events?.length){
+    if(el) el.innerHTML='<div style="font-family:var(--mono);font-size:8px;color:var(--dim);">Calendar syncs at 5:30 AM · check back tomorrow</div>';
+    return;
+  }
+  if(ph) ph.style.display='none';
+
+  const todayStr = new Date().toDateString();
+  const byDay = {};
+  for(const evt of data.events){
+    const key = new Date(evt.start).toDateString();
+    if(!byDay[key]) byDay[key]=[];
+    byDay[key].push(evt);
+  }
+
+  const html = Object.entries(byDay).map(([day,events])=>{
+    const d = new Date(day);
+    const isToday = day===todayStr;
+    const label = isToday ? 'TODAY'
+      : d.toLocaleDateString('en-US',{weekday:'short',month:'short',day:'numeric'}).toUpperCase();
+    const evtHtml = events.map(evt=>{
+      const start = new Date(evt.start);
+      const timeStr = evt.allDay ? 'ALL DAY'
+        : start.toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit',hour12:true});
+      return `<div style="display:flex;gap:6px;padding:2px 0;align-items:baseline;">
+        <span style="font-family:var(--mono);font-size:7.5px;color:var(--dim);min-width:52px;flex-shrink:0;">${timeStr}</span>
+        <span style="font-family:var(--mono);font-size:7.5px;font-weight:700;min-width:52px;flex-shrink:0;color:${evt.color||'var(--ac)'};">${evt.calendar}</span>
+        <span style="font-size:11px;color:var(--tx);line-height:1.4;">${evt.title}</span>
+      </div>`;
+    }).join('');
+    return `<div style="padding:5px 0;border-bottom:1px solid rgba(255,255,255,.05);">
+      <div style="font-family:var(--mono);font-size:7px;color:${isToday?'var(--ac)':'var(--dim)'};letter-spacing:1.5px;margin-bottom:4px;font-weight:700;">${label}</div>
+      ${evtHtml}
+    </div>`;
+  }).join('');
+
+  if(el) el.innerHTML=html;
+  if(badge){badge.textContent=`${data.count} EVENTS`;badge.className='bdg bg';}
+  const ageMin = data.generatedAt ? Math.round((Date.now()-new Date(data.generatedAt))/60000) : null;
+  console.log(`[Calendar] Rendered ${data.count} events (${ageMin}m old)`);
+}
 
 async function _loadFredDataImpl(){
   PERF.start('📊 FRED');
