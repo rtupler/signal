@@ -3612,6 +3612,28 @@ function renderFredGauges(d, today){
   renderFredCard(d);
 }
 
+function renderFredCard(d){
+  const el=document.getElementById('ck-fred-card');
+  const badge=document.getElementById('ck-fred-card-badge');
+  if(!el) return;
+  const rows=[
+    {label:'VIX',          val:d.vix!=null?d.vix.toFixed(1):null,          color:d.vix!=null?(d.vix<20?'var(--ac3)':d.vix<30?'var(--gold)':'var(--red)'):'var(--dim)'},
+    {label:'10Y Treasury', val:d.t10y!=null?d.t10y.toFixed(2)+'%':null,    color:d.t10y!=null?(d.t10y<3.5?'var(--ac3)':d.t10y<5?'var(--gold)':'var(--red)'):'var(--dim)'},
+    {label:'2Y Treasury',  val:d.t2y!=null?d.t2y.toFixed(2)+'%':null,      color:d.t2y!=null?(d.t2y<3.5?'var(--ac3)':d.t2y<5?'var(--gold)':'var(--red)'):'var(--dim)'},
+    {label:'Yield Curve',  val:d.spread!=null?(d.spread>=0?'+':'')+d.spread.toFixed(2)+'%':null, color:d.spread!=null?(d.spread>0.5?'var(--ac3)':d.spread>=0?'var(--gold)':'var(--red)'):'var(--dim)'},
+    {label:'HY OAS',       val:d.hyoas!=null?d.hyoas.toFixed(0)+'bps':null, color:d.hyoas!=null?(d.hyoas<300?'var(--ac3)':d.hyoas<500?'var(--gold)':'var(--red)'):'var(--dim)'},
+    {label:'DXY',          val:d.dxy!=null?d.dxy.toFixed(1):null,           color:'var(--tx)'},
+  ];
+  const anyVal=rows.some(r=>r.val!=null);
+  if(!anyVal){el.innerHTML='<div style="font-family:var(--mono);font-size:8px;color:var(--dim);">Awaiting FRED data...</div>';return;}
+  el.innerHTML=rows.map(r=>`
+    <div style="display:flex;justify-content:space-between;align-items:center;padding:4px 0;border-bottom:1px solid rgba(255,255,255,.04);">
+      <span style="font-family:var(--mono);font-size:9px;color:var(--dim);">${r.label}</span>
+      <span style="font-family:var(--mono);font-size:10px;font-weight:600;color:${r.color};">${r.val??'--'}</span>
+    </div>`).join('');
+  if(badge){badge.className='bdg bg';badge.textContent='LIVE';}
+}
+
 function updateFredUI(d, lbHtml){
   if(!lbHtml) lbHtml=(d.vix!=null?`<span>📊 <b>VIX:</b> ${d.vix}</span>`:'')
     +(d.t10y!=null?`<span>📈 <b>10Y:</b> ${d.t10y}%</span>`:'')
