@@ -3409,8 +3409,16 @@ async function _loadFredDataImpl(){
 
     if(!d) throw new Error('No data returned');
 
-    // Store in FRED_DATA for renderFredPanel
-    const today=d.date||new Date().toISOString().slice(0,10);
+    // ── Coerce all numeric fields from Sheet (may come as strings) ──
+    const toNum = v => v == null ? null : (isNaN(parseFloat(v)) ? null : parseFloat(v));
+    d.vix    = toNum(d.vix);
+    d.t10y   = toNum(d.t10y);
+    d.t2y    = toNum(d.t2y);
+    d.spread = toNum(d.spread);
+    d.hyoas  = toNum(d.hyoas);
+    d.dxy    = toNum(d.dxy);
+    d.be     = toNum(d.be);
+    d.walcl  = toNum(d.walcl);
     if(d.vix!=null)   FRED_DATA['VIXCLS']      ={value:d.vix.toString(),   date:today};
     if(d.t10y!=null)  FRED_DATA['DGS10']        ={value:d.t10y.toString(),  date:today};
     if(d.t2y!=null)   FRED_DATA['DGS2']         ={value:d.t2y.toString(),   date:today};
