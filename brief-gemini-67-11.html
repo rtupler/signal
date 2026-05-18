@@ -4716,21 +4716,38 @@ ATTRIBUTION RULES: attribution values must sum to the total score (positive = bu
       } catch(e){ console.warn('[RenderCache] Post-strategist save failed:', e.message); }
 
     } else {
-      // ── Restore last-known-good ──
-      console.warn('[Strategist] Invalid JSON or schema — restoring last known good');
+      // ── Invalid JSON — try Flash-Lite fallback first ──
+      console.warn('[Strategist] Invalid JSON — trying Flash-Lite fallback');
       if(regEl&&regEl._dotTimer){clearInterval(regEl._dotTimer);}
       try{
-        const last=JSON.parse(localStorage.getItem('rt_last_strat_v1')||'null');
-        if(last&&last.j){
-          const age=Math.round((Date.now()-last.ts)/60000);
-          // Re-render from saved structured data
-          const el=document.getElementById('out-strat');
-          if(el)el.innerHTML+=`<div style="font-family:var(--mono);font-size:9px;color:var(--gold);padding:6px;background:rgba(255,215,0,.06);border-radius:3px;margin-top:8px;">⚠ Showing cached synthesis from ${age}m ago</div>`;
-          const lastScores=JSON.parse(localStorage.getItem('rt_last_scores_v1')||'null');
-          if(lastScores&&lastScores.liq!=null){scoreUI(lastScores);const b=document.getElementById('score-badge-strat');if(b)b.textContent=`STALE ${age}m`;}
-        } else { err('out-strat','Parse failed — no cached state available'); }
-      }catch{ err('out-strat','Strategist failed and no cache available'); }
-      if(regEl){regEl.textContent='Strategist unavailable — hit Re-Synthesize';regEl.style.color='var(--red)';regEl.style.fontSize='';}
+        const fallbackR = await api(
+          'Senior macro strategist. Return ONLY valid JSON. Be decisive.',
+          `${TODAY}. Market data: ${MKT_CTX}\n\nReturn ONLY this minimal JSON:\n{"regime":"one sentence regime label","stance":"RISK ON or RISK OFF or NEUTRAL","add":"asset to add","reduce":"asset to reduce","scores":{"liq":40,"cred":40,"brd":30,"btc":25,"sent":45},"decisionRationale":"2 sentences","confidence":60}`,
+          false, 1500, GEMINI_MODEL_FAST, 45000
+        );
+        const fallbackJ = parseStrategistJSON(fallbackR);
+        if(fallbackJ){
+          console.log('[Strategist] Flash-Lite fallback succeeded');
+          if(regEl){regEl.textContent=fallbackJ.regime||'Fallback synthesis';regEl.style.color='var(--gold)';regEl.style.fontSize='';}
+          scoreUI(fallbackJ.scores);
+          const stEl=document.getElementById('out-strat');
+          if(stEl)stEl.innerHTML=`<div style="font-family:var(--mono);font-size:9px;color:var(--gold);padding:6px;background:rgba(255,215,0,.06);border-radius:3px;margin-bottom:8px;">⚡ Flash-Lite synthesis — RE-SYNTHESIZE for full analysis</div><div style="font-size:12px;line-height:1.6;">${fallbackJ.decisionRationale||''}</div>`;
+          const stanceEl=document.getElementById('dec-stance-val');
+          if(stanceEl)stanceEl.textContent=(fallbackJ.stance||'NEUTRAL').replace('RISK ','');
+        } else { throw new Error('Fallback parse failed'); }
+      }catch(fe){
+        try{
+          const last=JSON.parse(localStorage.getItem('rt_last_strat_v1')||'null');
+          if(last&&last.j){
+            const age=Math.round((Date.now()-last.ts)/60000);
+            const el=document.getElementById('out-strat');
+            if(el)el.innerHTML+=`<div style="font-family:var(--mono);font-size:9px;color:var(--gold);padding:6px;background:rgba(255,215,0,.06);border-radius:3px;margin-top:8px;">⚠ Showing cached synthesis from ${age}m ago</div>`;
+            const lastScores=JSON.parse(localStorage.getItem('rt_last_scores_v1')||'null');
+            if(lastScores&&lastScores.liq!=null){scoreUI(lastScores);const b=document.getElementById('score-badge-strat');if(b)b.textContent=`STALE ${age}m`;}
+          } else { err('out-strat','Parse failed — no cached state available'); }
+        }catch{ err('out-strat','Strategist failed and no cache available'); }
+        if(regEl){regEl.textContent='Strategist unavailable — hit Re-Synthesize';regEl.style.color='var(--red)';regEl.style.fontSize='';}
+      }
     }
   }catch(e){
     if(regEl&&regEl._dotTimer){clearInterval(regEl._dotTimer);}
