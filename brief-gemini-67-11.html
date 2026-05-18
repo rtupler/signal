@@ -2171,13 +2171,26 @@ function parseBriefingCSV(csvText){
   const lines = csvText.split('\n').slice(1);
   for(const line of lines){
     if(!line.trim()) continue;
+    // Extract key (first field)
     const firstComma = line.indexOf(',');
     if(firstComma===-1) continue;
     const key = line.slice(0,firstComma).replace(/"/g,'').trim();
     const rest = line.slice(firstComma+1);
+    // Extract value (second field) — may be quoted with internal commas and escaped quotes
     try{
-      const valueMatch = rest.match(/^"([\s\S]*?)",/);
-      const rawValue = valueMatch ? valueMatch[1].replace(/""/g,'"') : rest.split(',')[0].replace(/"/g,'');
+      let rawValue;
+      if(rest.startsWith('"')){
+        // Quoted field — find closing quote that's not doubled
+        let i=1, val='';
+        while(i<rest.length){
+          if(rest[i]==='"' && rest[i+1]==='"'){ val+='"'; i+=2; }
+          else if(rest[i]==='"'){ break; }
+          else { val+=rest[i]; i++; }
+        }
+        rawValue = val;
+      } else {
+        rawValue = rest.split(',')[0];
+      }
       result[key] = JSON.parse(rawValue);
     }catch{ result[key]=null; }
   }
@@ -4513,7 +4526,7 @@ Return ONLY this JSON object, filled with your analysis. No other text.
 }
 
 ATTRIBUTION RULES: attribution values must sum to the total score (positive = bullish contribution, negative = bearish drag). data_completeness is count of signals with live data (max 6). missing_signals lists any signals not available today.`,
-      false, 3500, GEMINI_MODEL_PRO
+      false, 6000, GEMINI_MODEL_PRO
     );
 
     // ── Parse via named function ──
