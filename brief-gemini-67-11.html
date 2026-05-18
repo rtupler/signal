@@ -2188,7 +2188,12 @@ async function loadGoogleAlerts(){
   const sheet = await fetchBriefingSheet();
   const data  = sheet?.alerts;
 
-  if(!data?.items?.length){
+  // Handle both Gemini-summarized (items[]) and raw fallback formats
+  const items = data?.items?.length ? data.items
+    : data?.raw?.length ? data.raw.map(r=>({headline:r.headline||r,source:r.source||'',category:'OTHER',importance:'MEDIUM',tickers:[]}))
+    : null;
+
+  if(!items?.length){
     console.log('[Alerts] Sheet data unavailable — using seed');
     return;
   }
@@ -2202,7 +2207,7 @@ async function loadGoogleAlerts(){
     COMMODITY:'var(--ac2)',GEOPOLITICAL:'var(--ac)',TECH:'var(--ac3)',OTHER:'var(--dim)'
   };
 
-  const html = data.items.map(item=>`
+  const html = items.map(item=>`
     <div style="display:flex;gap:8px;padding:5px 0;border-bottom:1px solid rgba(255,255,255,.04);align-items:baseline;flex-wrap:wrap;">
       <span style="font-family:var(--mono);font-size:7px;color:${catColors[item.category]||'var(--dim)'};min-width:80px;flex-shrink:0;letter-spacing:.5px;">${item.category||''}</span>
       <span style="font-size:11px;color:var(--tx);line-height:1.5;flex:1;">${item.headline}</span>
@@ -3289,6 +3294,54 @@ function fmtFred(s,value){
 // Direct FRED API fetch removed — CORS-blocked from browser.
 // FRED data flows: Apps Script → Google Sheet → brief (CORS-free)
 // Fallback: Gemini web search estimate via fetchMacroEstimateViaAI()
+
+
+// ── Range validator — rejects implausible hallucinated values ──
+function validateMacroEstimate(d){
+  const checks = [
+    d.vix   == null || (d.vix   >= 9   && d.vix   <= 90),
+    d.t10y  == null || (d.t10y  >= 0.5 && d.t10y  <= 10),
+    d.t2y   == null || (d.t2y   >= 0.1 && d.t2y   <= 10),
+    d.hyoas == null || (d.hyoas >= 100  && d.hyoas <= 2500),
+    d.dxy   == null || (d.dxy   >= 70   && d.dxy   <= 130),
+    d.spread== null || (d.spread>= -3   && d.spread <= 4),
+    d.be    == null || (d.be    >= 0.5  && d.be    <= 5),
+  ];
+  const failed = checks.filter(c=>!c).length;
+  if(failed>0){ console.warn(`[MacroValidation] ${failed} values failed range check`); return false; }
+  return true;
+}
+
+// ── AI macro estimate fallback via Gemini web search ──
+async function fetchMacroEstimateViaAI(){
+  const TODAY = new Date().toLocaleDateString('en-US',{weekday:'long',year:'numeric',month:'long',day:'numeric'});
+  const prompt = `Search the web for today's current market data as of ${TODAY}. Return ONLY a JSON object with real current values — search for each value, do not use training data or estimates. If you cannot find a real value via search, return null for that field rather than guessing:
+{"vix":null,"t10y":null,"t2y":null,"hyoas":null,"dxy":null,"spread":null,"be":null,"date":"${TODAY}"}
+IMPORTANT: hyoas must be in basis points (e.g. 276 not 2.76). spread is 10Y minus 2Y in percent. Return null for any value you cannot find via web search.`;
+  try{
+    const r = await api('Financial data assistant. Search the web for current market data. Return ONLY valid JSON — no markdown, no backticks.', prompt, true, 500);
+    const clean = r.replace(/```json|```/g,'').trim();
+    const d = JSON.parse(clean);
+    if(!validateMacroEstimate(d)) throw new Error('Validation failed');
+    d.source = 'AI_ESTIMATE';
+    return d;
+  }catch(e){
+    console.warn('[MacroAI] Estimate failed:', e.message);
+    return null;
+  }
+}
+
+// ── Try Apps Script sheet for FRED data first (CORS-free) ──
+async function loadFredFromSheet(){
+  const sheet = await fetchBriefingSheet();
+  const data = sheet?.fred;
+  if(!data || data.error || !data.t10y) return null;
+  const ageMin = data.generatedAt
+    ? Math.round((Date.now()-new Date(data.generatedAt))/60000) : 999;
+  if(ageMin > 480){ console.log(`[FRED Sheet] Stale (${ageMin}m) — skipping`); return null; }
+  console.log(`[FRED Sheet] Using Apps Script FRED data (${ageMin}m old)`);
+  return { ...data, source: 'FRED_API', _fromSheet: true };
+}
 
 // ── Public wrappers ──
 async function loadFredData(){ return APP_STATE.dedupe('loadFredData', _loadFredDataImpl); }
