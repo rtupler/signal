@@ -3124,6 +3124,44 @@ function renderThresholdFlags(){
 }
 
 // Compute weighted score using regime-specific weights
+// ── Anchor signal scores to real FRED data where available ──
+// Overrides Gemini's invented scores with deterministic values
+// liq/brd remain Gemini estimates (no clean single-series mapping)
+function anchorScoresToFred(s){
+  const anchored = {...s};
+  try{
+    const fredRaw = JSON.parse(localStorage.getItem('rt_fred_last_v1')||'null');
+    if(!fredRaw) return anchored;
+
+    // cred: derived from HY OAS (276bps=71, 400bps=50, 600bps=20)
+    if(fredRaw.hyoas != null){
+      const h = parseFloat(fredRaw.hyoas);
+      if(!isNaN(h)) anchored.cred = Math.round(Math.max(5, Math.min(95, 100 - (h-150)/4.5)));
+    }
+
+    // sent: derived from VIX (VIX 10=100, VIX 20=75, VIX 30=50, VIX 45=25)
+    if(fredRaw.vix != null){
+      const v = parseFloat(fredRaw.vix);
+      if(!isNaN(v)) anchored.sent = Math.round(Math.max(5, Math.min(95, 100 - (v-10)*2.5)));
+    }
+
+    // btc: derive from MKT_CTX if available
+    const btcMatch = MKT_CTX && MKT_CTX.match(/BTC[^-\d]*([\-+]?[\d.]+)%/i);
+    if(btcMatch){
+      const pct = parseFloat(btcMatch[1]);
+      if(!isNaN(pct)){
+        // Recent BTC change: +3% → 70, 0% → 50, -3% → 30
+        anchored.btc = Math.round(Math.max(5, Math.min(95, 50 + pct*6.7)));
+      }
+    }
+
+    if(anchored.cred !== s.cred || anchored.sent !== s.sent || anchored.btc !== s.btc){
+      console.log(`[ScoreAnchor] Overrides — cred:${s.cred}→${anchored.cred} sent:${s.sent}→${anchored.sent} btc:${s.btc}→${anchored.btc}`);
+    }
+  }catch(e){ console.warn('[ScoreAnchor] Failed:', e.message); }
+  return anchored;
+}
+
 function computeRegimeScore(s, regimeKey){
   const cfg = REGIME_CONFIG[regimeKey] || REGIME_CONFIG.LATE_CYCLE;
   const w = cfg.weights;
@@ -3249,8 +3287,9 @@ function scoreUI(s){
   // ── Detect regime and apply adaptive weights ──
   // Pass raw FRED data for machine-verifiable threshold layer
   const fredRaw = (() => { try{ return JSON.parse(localStorage.getItem('rt_fred_last_v1')||'null'); }catch{return null;} })();
-  const regimeKey = detectRegime(s, fredRaw);
-  const score = computeRegimeScore(s, regimeKey);
+  const sAnchored = anchorScoresToFred(s); // override with real FRED values
+  const regimeKey = detectRegime(sAnchored, fredRaw);
+  const score = computeRegimeScore(sAnchored, regimeKey);
   saveRegimeState(regimeKey, score);
   renderRegimeBadge(regimeKey);
   renderDriftAlert(s);
@@ -3810,9 +3849,17 @@ async function runMorningBrief(){
 async function _runMorningBriefImpl(){
   const ps=getTodaysPundits().slice(0,3);
 
-  // ── Restore Howell and News from daily cache if available ──
+  // ── Restore Weather, Howell and News from daily cache if available ──
+  const cachedWeather= getDailyCache('weather');
   const cachedHowell = getDailyCache('howell');
   const cachedNews   = getDailyCache('morning_news');
+  if(cachedWeather){
+    const wxEl=document.getElementById('out-weather');
+    const wxCk=document.getElementById('ck-wx');
+    if(wxEl) wxEl.innerHTML=cachedWeather;
+    if(wxCk) wxCk.innerHTML=cachedWeather;
+    badge('bw','🌤️ CACHED','bdg bc');
+  }
   if(cachedHowell){ render(cachedHowell,'out-howell'); render(cachedHowell,'ck-how'); badge('bhow','💧 CACHED','bdg bgold'); badge('ck-bhow','💧 CACHED','bdg bgold'); }
   if(cachedNews)  { render(cachedNews,'out-news');     render(cachedNews,'ck-news');   badge('bnews','📰 CACHED','bdg brd'); badge('ck-bnews','📰 CACHED','bdg brd'); }
 
@@ -4269,10 +4316,10 @@ Known camp: ${campCtx}
 
 Output EXACTLY (no preamble):
 CALL: [their most recent market call — ticker, direction, price target if available. Use their known thesis if no fresh call found.]
-DATE: [date of call, or "this week", or "recent"]
+DATE: [MUST be a specific date like "May 15, 2026" or "this week" — if you cannot find a real published date from your search, write "DATE: UNVERIFIED"]
 SIGNAL: [BULLISH / BEARISH / NEUTRAL]
 TICKER: [primary ticker, sector, or "macro"]
-WHY: [1 sentence — thesis or relevance to current market context]`,
+WHY: [1 sentence — thesis or relevance to current market context. Only attribute specific quotes to this analyst if you found them in actual search results.]`,
     true
   );
   PCACHE[p.n] = r;
@@ -4304,7 +4351,7 @@ function buildPundCard(p, d){
       <div class="pund-name">${p.n} <span style="color:${col};font-size:12.5px;margin-left:5px;">${em} ${d.signal}</span></div>
       <span style="font-family:var(--mono);font-size:12px;color:${campColor};">${p.camp.split(' ').slice(0,2).join(' ')}</span>
     </div>
-    <div class="pund-firm">${p.f}${d.date ? ' · <span style="color:var(--gold)">📅 '+d.date+'</span>' : ''}</div>
+    <div class="pund-firm">${p.f}${d.date ? ' · <span style="color:' + (d.date.toUpperCase().includes('UNVERIFIED') ? 'var(--red)' : 'var(--gold)') + '">' + (d.date.toUpperCase().includes('UNVERIFIED') ? '⚠ UNVERIFIED DATE' : '📅 '+d.date) + '</span>' : ''}</div>
     <div class="pund-call">${d.call}</div>
     <div style="display:flex;align-items:center;gap:8px;margin-top:5px;">
       <span style="font-family:var(--mono);font-size:12.5px;color:var(--gold);">${d.ticker !== '--' ? d.ticker : ''}</span>
@@ -6029,7 +6076,7 @@ async function fetchShow(cfg){
   if(SHOWS_CACHE[cfg.key]) return SHOWS_CACHE[cfg.key];
   const yestShort = getYesterdayShort();
   const r = await api(
-    `CNBC show analyst. Search the web thoroughly for ${cfg.name} coverage from ${getYesterdayShort()}. NEVER say data is unavailable — always search multiple sources (CNBC.com, YouTube, Twitter/X, financial news) and provide the best available recap. If exact episode data is sparse, use context from the hosts, the market environment that day, and known guest patterns to fill gaps. Always produce a complete, useful recap.`,
+    `CNBC show analyst. Search the web thoroughly for ${cfg.name} coverage from ${getYesterdayShort()}. NEVER say data is unavailable — always search multiple sources (CNBC.com, YouTube, Twitter/X, financial news) and provide the best available recap. CRITICAL ACCURACY RULES: (1) Only attribute ticker calls to guests you found in actual search results — never invent guest names or affiliations. (2) If you cannot verify a guest name, write 'Guest analyst' rather than inventing a name. (3) Only include stock endorsements you found from real sources — do not infer or fabricate calls based on known host preferences.`,
     `${TODAY}. Recap: ${cfg.name} — ${getYesterdayShort()} · ${cfg.time} ET · Hosts: ${cfg.hosts}
 Search queries to try: "${cfg.q()}" | "CNBC ${yestShort} stocks" | "${cfg.hosts.split(',')[0]} ${yestShort}"
 
@@ -7066,40 +7113,61 @@ async function loadWeather(){
   return APP_STATE.dedupe('loadWeather', _loadWeatherImpl);
 }
 async function _loadWeatherImpl(){
-  // Dedicated weather fetch — always runs, owns the weather card
+  // Open-Meteo API — free, CORS-safe, no key needed, always reliable
   const wxEl=document.getElementById('out-weather');
+  const wxCk=document.getElementById('ck-wx');
   if(!wxEl)return;
   wxEl.innerHTML='<div class="sk-wrap"><div class="sk"></div><div class="sk w7"></div><div class="sk w5"></div></div>';
   badge('bw','--','bdg');
   try{
-    const r=await api(
-      'Weather reporter. Return ONLY 4 lines, one per day, no intro, no explanation.',
-      `${TODAY}. New Orleans, LA 4-day forecast starting today.
-Return EXACTLY 4 lines in this format (nothing else, no preamble):
-Sat ⛅ 74/62°F Partly cloudy
-Sun ☀️ 78/64°F Sunny
-Mon 🌧️ 72/60°F Rain
-Tue ⛅ 75/62°F Partly cloudy`,
-      true // use web search
-    );
-    if(r&&r.trim()){
-      const wxClean=r.replace(/New Orleans\s*/gi,'');
-      const dayLines=wxClean.split(/\n/).map(s=>s.trim()).filter(s=>s.length>4&&/^(mon|tue|wed|thu|fri|sat|sun)/i.test(s));
-      if(dayLines.length>=1){
-        wxEl.innerHTML=dayLines.slice(0,4).map(line=>{
-          const m=line.match(/^(\w+)\s+([\S]+)\s+([\d]+\/[\d]+°?F?)\s+(.+)$/);
-          if(m)return `<div style="background:var(--s3);border-radius:5px;padding:6px 10px;margin-bottom:5px;display:flex;align-items:center;gap:10px;">
-            <div style="font-family:var(--mono);font-size:8px;color:var(--dim);min-width:24px;">${m[1].toUpperCase()}</div>
-            <div style="font-size:18px;">${m[2]}</div>
-            <div><div style="font-family:var(--mono);font-size:9px;color:var(--ac);font-weight:700;">${m[3]}</div>
-            <div style="font-family:var(--mono);font-size:7.5px;color:var(--dim);">${m[4]}</div></div>
-          </div>`;
-          return `<div style="font-size:11px;color:var(--tx);padding:3px 0;">${line}</div>`;
-        }).filter(Boolean).join('');
-        badge('bw','🌤️ LIVE','bdg bg');
-      }
+    // New Orleans: lat=29.9511, lon=-90.0715
+    const url='https://api.open-meteo.com/v1/forecast?latitude=29.9511&longitude=-90.0715&daily=temperature_2m_max,temperature_2m_min,weathercode&temperature_unit=fahrenheit&timezone=America%2FChicago&forecast_days=4';
+    const res = await fetch(url, {signal: AbortSignal.timeout(8000)});
+    if(!res.ok) throw new Error(`Open-Meteo HTTP ${res.status}`);
+    const data = await res.json();
+
+    const days = data.daily;
+    const wmoCodes = {
+      0:'☀️ Clear',1:'🌤️ Mostly clear',2:'⛅ Partly cloudy',3:'☁️ Overcast',
+      45:'🌫️ Foggy',48:'🌫️ Icy fog',51:'🌦️ Light drizzle',53:'🌦️ Drizzle',55:'🌧️ Heavy drizzle',
+      61:'🌧️ Light rain',63:'🌧️ Rain',65:'🌧️ Heavy rain',71:'🌨️ Light snow',73:'🌨️ Snow',75:'❄️ Heavy snow',
+      80:'🌦️ Showers',81:'🌧️ Heavy showers',82:'⛈️ Violent showers',
+      95:'⛈️ Thunderstorm',96:'⛈️ Thunderstorm',99:'⛈️ Heavy thunderstorm'
+    };
+    const dayNames=['SUN','MON','TUE','WED','THU','FRI','SAT'];
+
+    const html = days.time.slice(0,4).map((dateStr,i)=>{
+      const d = new Date(dateStr+'T12:00:00');
+      const dayName = dayNames[d.getDay()];
+      const hi = Math.round(days.temperature_2m_max[i]);
+      const lo = Math.round(days.temperature_2m_min[i]);
+      const wmo = days.weathercode[i];
+      const desc = wmoCodes[wmo] || '⛅ Mixed';
+      const [icon, ...condParts] = desc.split(' ');
+      const cond = condParts.join(' ');
+      return `<div style="background:var(--s3);border-radius:5px;padding:6px 10px;margin-bottom:5px;display:flex;align-items:center;gap:10px;">
+        <div style="font-family:var(--mono);font-size:8px;color:var(--dim);min-width:28px;">${dayName}</div>
+        <div style="font-size:18px;">${icon}</div>
+        <div><div style="font-family:var(--mono);font-size:9px;color:var(--ac);font-weight:700;">${hi}/${lo}°F</div>
+        <div style="font-family:var(--mono);font-size:7.5px;color:var(--dim);">${cond}</div></div>
+      </div>`;
+    }).join('');
+
+    wxEl.innerHTML = html;
+    if(wxCk) wxCk.innerHTML = html;
+    badge('bw','🌤️ LIVE','bdg bg');
+    badge('ck-bwx','🌤️ LIVE','bdg bg');
+    setDailyCache('weather', html);
+    console.log('[Weather] Open-Meteo loaded successfully');
+  }catch(e){
+    console.warn('[Weather] Open-Meteo failed:', e.message, '— trying daily cache');
+    const cached = getDailyCache('weather');
+    if(cached){
+      wxEl.innerHTML = cached;
+      if(wxCk) wxCk.innerHTML = cached;
+      badge('bw','🌤️ CACHED','bdg bc');
     }
-  }catch(e){console.warn('Weather fallback:',e.message);}
+  }
 }
 
 
