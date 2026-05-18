@@ -3409,6 +3409,9 @@ async function _loadFredDataImpl(){
 
     if(!d) throw new Error('No data returned');
 
+    // Store in FRED_DATA for renderFredPanel
+    const today=d.date||new Date().toISOString().slice(0,10);
+
     // ── Coerce all numeric fields from Sheet (may come as strings) ──
     const toNum = v => v == null ? null : (isNaN(parseFloat(v)) ? null : parseFloat(v));
     d.vix    = toNum(d.vix);
