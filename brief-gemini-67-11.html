@@ -867,7 +867,7 @@ h3 .caps-hi, strong .caps-hi{ color:inherit; }
       <div id="anomaly-score-text" style="font-family:var(--mono);font-size:9px;color:var(--dim);line-height:1.55;"></div>
     </div>
 
-    <!-- Signal Audit Panel -->
+    <!-- Signal Attribution Panel -->
     <div style="border-top:1px solid var(--brd);padding:8px 16px;">
       <div style="display:flex;align-items:center;gap:8px;cursor:pointer;" onclick="const b=document.getElementById('signal-audit-body');b.style.display=b.style.display==='none'?'block':'none';">
         <span style="font-family:var(--mono);font-size:8px;color:var(--dim);letter-spacing:1.5px;">🔬 SIGNAL ATTRIBUTION</span>
@@ -4374,7 +4374,7 @@ Known focus: ${p.focus}
 Known camp: ${campCtx}
 
 Output EXACTLY (no preamble):
-CALL: [their most recent market call — ticker, direction, price target if available. Use their known thesis if no fresh call found.]
+CALL: [their most recent market call — 1-2 sentences MAX. Ticker, direction, price target. Be concise.]
 DATE: [MUST be a specific date like "May 15, 2026" or "this week" — if you cannot find a real published date from your search, write "DATE: UNVERIFIED"]
 SIGNAL: [BULLISH / BEARISH / NEUTRAL]
 TICKER: [primary ticker, sector, or "macro"]
@@ -4739,19 +4739,10 @@ Return ONLY this JSON object, filled with your analysis. No other text.
   "confidence": 70,
   "catalysts": ["Catalyst 1", "Catalyst 2"],
   "invalidation_trigger": "Specific level or event that would invalidate this thesis",
-  "attribution": {
-    "liquidity": 0,
-    "breadth": 0,
-    "btc_trend": 0,
-    "sentiment": 0,
-    "credit": 0,
-    "fred_macro": 0
-  },
   "data_completeness": 6,
   "missing_signals": []
 }
-
-ATTRIBUTION RULES: attribution values must sum to the total score (positive = bullish contribution, negative = bearish drag). data_completeness is count of signals with live data (max 6). missing_signals lists any signals not available today.`,
+`,
       false, 6000, GEMINI_MODEL_PRO, 90000  // 90s timeout for PRO model
     );
 
@@ -4846,8 +4837,8 @@ ATTRIBUTION RULES: attribution values must sum to the total score (positive = bu
       // 9. Forecast Registry — store full structured record for calibration
       saveForecastRecord(j, regimeKey);
 
-      // 10. Attribution block — render into Strategist tab
-      renderAttribution(j);
+      // Attribution removed — Gemini consistently hallucinated values
+      try{ renderAttribution(j); }catch{}
 
       // 9. Persist last-known-good (both legacy key and LAST_GOOD store)
       localStorage.setItem('rt_last_strat_v1', JSON.stringify({j, ts:Date.now()}));
@@ -5086,7 +5077,6 @@ function renderAttribution(j){
   block.id = 'strat-attribution-block';
   block.style.cssText = 'margin-top:14px;background:rgba(0,229,255,.03);border:1px solid rgba(0,229,255,.12);border-radius:6px;padding:12px 14px;';
   block.innerHTML = `
-    <div style="font-family:var(--mono);font-size:7px;color:var(--ac);letter-spacing:2px;margin-bottom:8px;">SIGNAL ATTRIBUTION</div>
     ${rows}
     <div style="display:flex;gap:12px;margin-top:8px;padding-top:7px;border-top:1px solid rgba(255,255,255,.06);">
       <div style="font-family:var(--mono);font-size:7.5px;color:var(--dim);">CONFIDENCE <span style="color:${confColor};font-weight:700;">${confClass.adjustedConf}% · ${confClass.label}</span>${confClass.thresholdConflict?'<span style="color:var(--red);margin-left:6px;">⚠ SIGNAL CONFLICT</span>':''}</div>
