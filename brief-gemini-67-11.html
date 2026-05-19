@@ -5393,13 +5393,50 @@ Memorable hook: [One sentence that makes this stick — analogy, mnemonic, or co
   ld('btn-teaching',false);
 }
 
+// ── Render clinical pearls to cockpit with full label styling ──
+function renderClinToCockpit(r){
+  if(!r) return;
+  const fmtP=(hdr,body)=>{
+    const b=body
+      .replace(/\*\*(.+?)\*\*/g,'<b style="color:var(--br)">$1</b>')
+      .replace(/Concept:/g,'<span class="pearl-lbl txt" style="color:var(--ac3);font-weight:700;">Concept</span>')
+      .replace(/Arbitrator:/g,'<br><span class="pearl-lbl arb" style="color:var(--gold);font-weight:700;">Arbitrator</span>')
+      .replace(/Threshold:/g,'<br><span class="pearl-lbl meas" style="color:var(--ac);font-weight:700;">Threshold</span>')
+      .replace(/Teaching:/g,'<br><span class="pearl-lbl txt" style="color:var(--ac3);font-weight:700;">Teaching</span>')
+      .replace(/Trap:/g,'<br><span class="pearl-lbl arb" style="color:var(--red);font-weight:700;">Trap</span>')
+      .replace(/Viewbox Tip:/g,'<br><span class="pearl-lbl src" style="color:var(--ac);font-weight:700;">Viewbox Tip</span>')
+      .replace(/Source:/g,'<br><span class="pearl-lbl src" style="color:var(--dim);font-weight:700;">Source</span>')
+      .replace(/\n/g,'<br>').trim();
+    return `<div class="pearl-card" style="margin-bottom:10px;padding:10px;background:var(--s2);border-radius:5px;border-left:2px solid var(--gold);">
+      <div class="pearl-hdr" style="font-family:var(--mono);font-size:9px;color:var(--gold);font-weight:700;letter-spacing:1px;margin-bottom:6px;">${hdr.replace(/\*+/g,'').trim()}</div>
+      <div class="pearl-body" style="font-size:11px;line-height:1.6;color:var(--tx);">${b}</div>
+    </div>`;
+  };
+  const p1=r.match(/\*\*PEARL 1[^*]*\*\*([\s\S]*?)(?=\*\*PEARL\s+[23]|\*\*SOURCE\b|$)/i);
+  const p2=r.match(/\*\*PEARL 2[^*]*\*\*([\s\S]*?)(?=\*\*PEARL\s+3|\*\*SOURCE\b|$)/i);
+  const p3=r.match(/\*\*PEARL 3[^*]*\*\*([\s\S]*?)(?=\*\*PEARL\s+4|\*\*SOURCE\b|$)/i);
+  const html=
+    (p1?fmtP(r.match(/\*\*PEARL 1[^*]*\*\*/i)?.[0]||'PEARL 1',p1[1]):'')+
+    (p2?fmtP(r.match(/\*\*PEARL 2[^*]*\*\*/i)?.[0]||'PEARL 2',p2[1]):'')+
+    (p3?fmtP(r.match(/\*\*PEARL 3[^*]*\*\*/i)?.[0]||'PEARL 3',p3[1]):'');
+  const count=[p1,p2,p3].filter(Boolean).length;
+  ['ck-clin','out-clin-am'].forEach(id=>{
+    const el=document.getElementById(id);
+    if(el&&html) el.innerHTML=html;
+  });
+  ['ck-bclin','am-clin-badge'].forEach(id=>{
+    const el=document.getElementById(id);
+    if(el){ el.textContent=count+' LIVE'; el.className='bdg bgold'; }
+  });
+}
+
 async function runClinical(forceFresh=false){
   ld('btn-clin',true);updateDedupUI();
   // Check daily cache first (skip if force refresh)
   const clinCached = forceFresh ? null : getDailyCache('clinical_pearl');
   if(clinCached){
     render(clinCached,'out-clin');
-    const ckClin=document.getElementById('ck-clin'); if(ckClin) ckClin.innerHTML=clinCached;
+    renderClinToCockpit(clinCached);
     badge('ck-bclin','CACHED','bdg bgold');
     ld('btn-clin',false);
     return;
@@ -5468,6 +5505,7 @@ async function runClinical(forceFresh=false){
     document.getElementById('out-clin').appendChild(dedupBadge);
     // Mirror pearls to cockpit — full format
     const ckClin=document.getElementById('ck-clin');
+    renderClinToCockpit(r);
     {
       const p1=r.match(/\*\*PEARL 1[^*]*\*\*([\s\S]*?)(?=\*\*PEARL\s+[23]|\*\*SOURCE\b|$)/i);
       const p2=r.match(/\*\*PEARL 2[^*]*\*\*([\s\S]*?)(?=\*\*PEARL\s+3|\*\*SOURCE\b|$)/i);
