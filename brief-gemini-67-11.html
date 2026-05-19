@@ -4384,6 +4384,40 @@ function buildPunditSummary(results){
   return lines.join('\n');
 }
 
+// ── Render ONE SCREEN + PUNDITS tab from cache immediately ──
+// Called from loadAll Lane 1 — all helper functions are defined by this point
+function renderPunditsFromCache(){
+  if(Object.keys(PCACHE).length === 0) return;
+  try{
+    const today = getTodaysPundits();
+    if(!today.length) return;
+    const results = today.map(p=>({
+      p,
+      d: PCACHE[p.n] ? parseOnePundit(PCACHE[p.n]) : {call:'',date:'--',signal:'NEUTRAL',ticker:'--',why:''}
+    }));
+    const hasCall = ({d})=>d&&d.call&&d.call.trim().length>10;
+    const sorted = [...results.filter(hasCall), ...results.filter(x=>!hasCall(x))];
+
+    // ONE SCREEN ck-pund
+    const ckBox = document.getElementById('ck-pund');
+    if(ckBox){
+      ckBox.innerHTML=`<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:0;">${sorted.map(({p,d})=>buildCkPundEntry(p,d)).join('')}</div>`;
+      badge('ck-bpund', sorted.filter(hasCall).length+' CALLS · '+sorted.length+' LIVE', 'bdg bc');
+    }
+
+    // PUNDITS tab grid
+    const grid = document.getElementById('pundit-grid');
+    if(grid){
+      grid.innerHTML = today.map(p=>{
+        const d = PCACHE[p.n] ? parseOnePundit(PCACHE[p.n]) : {call:'Loading...',date:'--',signal:'NEUTRAL',ticker:'--',why:''};
+        return buildPundCard(p, d);
+      }).join('');
+    }
+
+    console.log(`[PunditCache] Rendered ${sorted.length} cached calls on ONE SCREEN + PUNDITS tab`);
+  }catch(e){ console.warn('[PunditCache] Render failed:', e.message); }
+}
+
 // ── Gap 2: Main — staggered parallel fetches (3 at a time, 250ms between batches) ──
 async function runPunditsAM(){
   const today = getTodaysPundits();
@@ -7170,6 +7204,27 @@ function lazyLoad(t){
     if(st) st.textContent = `📡 Loading CNBC shows from ${dayName}...`;
     reloadShows();
   }
+  if(t==='pundits' && !loadedTabs['pundits']){
+    loadedTabs['pundits'] = true;
+    // Render from cache immediately if available
+    if(Object.keys(PCACHE).length > 0){
+      const today = getTodaysPundits();
+      const grid = document.getElementById('pundit-grid');
+      const ckBox = document.getElementById('ck-pund');
+      if(grid) grid.innerHTML = today.map(p=>{
+        const d = PCACHE[p.n] ? parseOnePundit(PCACHE[p.n]) : {call:'Loading...',date:'--',signal:'NEUTRAL',ticker:'--',why:''};
+        return buildPundCard(p, d);
+      }).join('');
+      if(ckBox){
+        const results = today.map(p=>({p, d: PCACHE[p.n] ? parseOnePundit(PCACHE[p.n]) : {call:'',date:'--',signal:'NEUTRAL',ticker:'--',why:''}}));
+        const hasCall=({d})=>d&&d.call&&d.call.trim().length>10;
+        const sorted=[...results.filter(hasCall),...results.filter(x=>!hasCall(x))];
+        ckBox.innerHTML=`<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:0;">${sorted.map(({p,d})=>buildCkPundEntry(p,d)).join('')}</div>`;
+        badge('ck-bpund',sorted.filter(hasCall).length+' CALLS · '+sorted.length+' LIVE','bdg bc');
+      }
+    }
+    runPunditsAM();
+  }
   if(t==='clinical'){ setTimeout(()=>runClinical(), 400); }
   if(t==='fred' && Object.keys(FRED_DATA).length===0){ loadFredData(); }
 }
@@ -7318,6 +7373,7 @@ async function loadAll(){
 
   // ── LANE 1: instant / non-blocking ──
   renderCachedDashboard();  // paint last-known-good immediately — zero latency
+  renderPunditsFromCache(); // paint pundit summary from localStorage cache
   loadCockpitCalendar();
   seedAlerts();
   loadGoogleAlerts();
