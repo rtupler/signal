@@ -606,7 +606,7 @@ h3 .caps-hi, strong .caps-hi{ color:inherit; }
   <!-- ── ROW 5: Top Pundit Calls — full width auto-fill ── -->
   <div class="card" style="margin-bottom:6px;">
     <div class="ch"><span>🎙️</span><span class="ct">Top Pundit Calls</span><span class="bdg bc" id="ck-bpund">--</span></div>
-    <div class="cb out" id="ck-pund" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(340px,1fr));gap:0;"><div class="sk-wrap"><div class="sk"></div><div class="sk w7"></div></div></div>
+    <div class="cb out" id="ck-pund" style="display:grid;grid-template-columns:repeat(4,1fr);gap:0;"><div class="sk-wrap"><div class="sk"></div><div class="sk w7"></div></div></div>
   </div>
 
 </div>
@@ -4401,7 +4401,7 @@ function renderPunditsFromCache(){
     // ONE SCREEN ck-pund
     const ckBox = document.getElementById('ck-pund');
     if(ckBox){
-      ckBox.innerHTML=`<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(340px,1fr));gap:0;">${sorted.map(({p,d})=>buildCkPundEntry(p,d)).join('')}</div>`;
+      ckBox.innerHTML=`<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:0;">${sorted.map(({p,d})=>buildCkPundEntry(p,d)).join('')}</div>`;
       badge('ck-bpund', sorted.filter(hasCall).length+' CALLS · '+sorted.length+' LIVE', 'bdg bc');
     }
 
@@ -4482,10 +4482,10 @@ async function runPunditsAM(){
   // Sort: pundits with real calls first, then "no call" ones
   const hasCall=({d})=>d&&d.call&&!d.call.toLowerCase().includes('no published')&&!d.call.toLowerCase().includes('no call found')&&d.call.trim().length>10;
   const filledSorted=[...filled.filter(hasCall), ...filled.filter(x=>!hasCall(x))];
-  if(ckBox) ckBox.innerHTML = `<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(340px,1fr));gap:0;">${filledSorted.map(({p,d})=>buildCkPundEntry(p,d)).join('')}</div>`;
+  if(ckBox) ckBox.innerHTML = `<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:0;">${filledSorted.map(({p,d})=>buildCkPundEntry(p,d)).join('')}</div>`;
   // Mirror to morning tab
   const amBox = document.getElementById('am-pund');
-  if(amBox) amBox.innerHTML = `<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(340px,1fr));gap:0;">${filledSorted.map(({p,d})=>buildCkPundEntry(p,d)).join('')}</div>`;
+  if(amBox) amBox.innerHTML = `<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:0;">${filledSorted.map(({p,d})=>buildCkPundEntry(p,d)).join('')}</div>`;
   const callCount = filledSorted.filter(hasCall).length;
   badge('ck-bpund', callCount+' CALLS · '+filledSorted.length+' LIVE', 'bdg bc');
   badge('am-bpund', callCount+' CALLS · '+filledSorted.length+' LIVE', 'bdg bc');
@@ -7219,7 +7219,7 @@ function lazyLoad(t){
         const results = today.map(p=>({p, d: PCACHE[p.n] ? parseOnePundit(PCACHE[p.n]) : {call:'',date:'--',signal:'NEUTRAL',ticker:'--',why:''}}));
         const hasCall=({d})=>d&&d.call&&d.call.trim().length>10;
         const sorted=[...results.filter(hasCall),...results.filter(x=>!hasCall(x))];
-        ckBox.innerHTML=`<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(340px,1fr));gap:0;">${sorted.map(({p,d})=>buildCkPundEntry(p,d)).join('')}</div>`;
+        ckBox.innerHTML=`<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:0;">${sorted.map(({p,d})=>buildCkPundEntry(p,d)).join('')}</div>`;
         badge('ck-bpund',sorted.filter(hasCall).length+' CALLS · '+sorted.length+' LIVE','bdg bc');
       }
     }
