@@ -1675,19 +1675,6 @@ h3 .caps-hi, strong .caps-hi{ color:inherit; }
 
   </div>
 
-    <!-- CNBC Opinion -->
-  <div class="card" style="margin-bottom:8px;border-color:rgba(0,229,255,.15);">
-    <div class="ch" style="background:linear-gradient(90deg,var(--s2),rgba(0,229,255,.04));border-bottom-color:rgba(0,229,255,.15);">
-      <span>✍️</span>
-      <span class="ct" style="color:var(--ac);">CNBC Opinion · cnbc.com/opinion</span>
-      <span class="bdg bc" id="cnbc-opinion-badge">--</span>
-      <button class="ref" onclick="loadCnbcOpinion()" style="margin-left:auto;">↺</button>
-    </div>
-    <div class="cb out" id="out-cnbc-opinion">
-      <div style="font-family:var(--mono);font-size:var(--fs-xs);color:var(--dim);">Loads when CNBC tab opens.</div>
-    </div>
-  </div>
-
   <!-- Cross-show consensus -->
   <div class="card" style="border-color:rgba(255,215,0,.2);">
     <div class="ch" style="background:linear-gradient(90deg,var(--s2),rgba(255,215,0,.05));border-bottom-color:rgba(255,215,0,.2);">
@@ -4375,7 +4362,7 @@ function buildCkPundEntry(p, d){
       <span style="font-family:var(--mono);font-size:7.5px;color:var(--dim);">· ${p.f}</span>
       <span style="margin-left:auto;font-family:var(--mono);font-size:7.5px;color:var(--dim);">${(d.date||'').replace(/January/,'Jan').replace(/February/,'Feb').replace(/March/,'Mar').replace(/April/,'Apr').replace(/,\s*\d{4}/,'').slice(0,12)}</span>
     </div>
-    <div style="font-size:11.5px;line-height:1.45;color:var(--tx);margin-bottom:3px;">${d.call}</div>
+    <div style="font-size:10.5px;line-height:1.4;color:var(--tx);margin-bottom:3px;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden;" title="${d.call}">${d.call}</div>
     <div style="font-family:var(--mono);font-size:7.5px;">${em} <span style="color:${col};font-weight:700;">${d.ticker}</span></div>
   </div>`;
 }
@@ -7172,73 +7159,8 @@ async function _loadWeatherImpl(){
 }
 
 
-// ════ CNBC OPINION ════
-async function loadCnbcOpinion(){
-  const el=document.getElementById('out-cnbc-opinion');
-  const badge=document.getElementById('cnbc-opinion-badge');
-  if(!el)return;
-  el.innerHTML='<div class="sk-wrap"><div class="sk"></div><div class="sk w7"></div></div>';
-  try{
-    const r=await api(
-      'Financial analyst. Search cnbc.com/opinion for today\'s latest opinion pieces. Extract real author names, titles, and key argument. Be specific and direct.',
-      `${TODAY}. Search for the latest opinion articles published today or this week on https://www.cnbc.com/opinion/
-List the 4-5 most relevant pieces for a macro investor. Format each as:
-**[Author Name]:** [Article title] — [One sentence on the core argument, specific and actionable]
-Focus on market outlook, Fed policy, AI, geopolitics, or sectors. Skip generic pieces.`,
-      true
-    );
-    if(r&&r.trim()){
-      render(r,'out-cnbc-opinion');
-      if(badge){badge.textContent='LIVE';badge.className='bdg bg';}
-    } else {
-      el.innerHTML='<div class="err-msg">No opinion pieces found</div>';
-      if(badge){badge.textContent='ERR';badge.className='bdg brd';}
-    }
-  }catch(e){
-    err('out-cnbc-opinion',e.message);
-    if(badge){badge.textContent='ERR';badge.className='bdg brd';}
-  }
-}
-// ── Lazy tab load tracker ──
-// loadedTabs is now APP_STATE.loadedTabs — shim defined above in LOAD SEQUENCE
-const lazyRetries = {};
-function lazyLoad(tab){
-  if(loadedTabs[tab]||!getKey()) return;
-  // Global queue pressure guard — defer, with retry cap
-  if(queueIsBusy()){
-    lazyRetries[tab] = (lazyRetries[tab]||0) + 1;
-    if(lazyRetries[tab] > 5){
-      console.warn(`[lazyLoad] ${tab} skipped after 5 retries — queue chronically busy`);
-      return;
-    }
-    console.log(`[lazyLoad] Queue busy — deferring ${tab} (attempt ${lazyRetries[tab]})`);
-    setTimeout(()=>lazyLoad(tab), 8000);
-    return;
-  }
-  loadedTabs[tab] = true;
-  lazyRetries[tab] = 0;
-  if(tab==='pundits'){ runPunditsAM(); }
-  if(tab==='shows'){
-    const opEl=document.getElementById('out-cnbc-opinion');
-    if(opEl&&!opEl.querySelector('p')&&!opEl.querySelector('h3')) loadCnbcOpinion();
-    if(!showsLoaded){
-      showsLoaded=true;
-      const day=new Date().getDay();
-      const daysBack=day===0?2:day===1?3:1;
-      const lastAir=new Date();lastAir.setDate(lastAir.getDate()-daysBack);
-      const dayName=lastAir.toLocaleDateString('en-US',{weekday:'long',month:'short',day:'numeric'});
-      const st=document.getElementById('shows-st');
-      if(st)st.textContent=`📡 Loading CNBC shows from ${dayName}...`;
-      reloadShows();
-    }
-  }
-  if(tab==='clinical'){ setTimeout(runClinical,400); }
-  if(tab==='morning'){
-    runAiPearls();
-    const clinAm=document.getElementById('out-clin-am');
-    if(clinAm&&!clinAm.querySelector('.pearl-card')) setTimeout(runClinical,3000);
-  }
-}
+// CNBC Opinion removed — unreliable web access
+
 
 // ════ CACHE-FIRST RENDER ════
 // Paints the ONE SCREEN dashboard instantly from localStorage before any API calls fire.
