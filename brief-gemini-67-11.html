@@ -199,11 +199,13 @@ select.inp{cursor:pointer;}
 .prio-chip{font-family:var(--mono);font-size:9.5px;padding:3px 10px;border-radius:20px;background:rgba(0,0,0,.15);border:1px solid var(--pc,var(--brd));color:var(--pc,var(--tx));letter-spacing:.3px;}
 
 /* ── PUNDIT CARDS ── */
-.pund-card{background:var(--s2);border:1px solid var(--brd);border-radius:5px;padding:10px;margin-bottom:7px;border-left:3px solid var(--ac);}
+.pundit-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:6px;align-items:start;}
+.pund-card{background:rgba(255,255,255,.015);border:1px solid var(--brd);border-radius:5px;padding:7px 8px;margin-bottom:0;border-left:2px solid var(--ac);min-height:0;}
 .pund-card:last-child{margin-bottom:0;}
-.pund-name{font-family:var(--mono);font-size:9.5px;color:var(--br);font-weight:700;margin-bottom:2px;}
-.pund-firm{font-family:var(--mono);font-size:9px;color:var(--dim);margin-bottom:5px;}
-.pund-call{font-size:11.5px;color:var(--tx);line-height:1.55;margin-bottom:5px;word-wrap:break-word;overflow-wrap:break-word;}
+.pund-name{font-family:var(--mono);font-size:8.5px;letter-spacing:.3px;color:var(--br);font-weight:700;margin-bottom:2px;}
+.pund-firm{font-family:var(--mono);font-size:7.5px;opacity:.72;color:var(--dim);margin-bottom:5px;}
+.pund-call{font-size:10.5px;color:var(--tx);line-height:1.32;margin-bottom:5px;display:-webkit-box;-webkit-line-clamp:5;-webkit-box-orient:vertical;overflow:hidden;position:relative;}
+.pund-call::after{content:'';position:absolute;bottom:0;left:0;right:0;height:18px;background:linear-gradient(to bottom,rgba(6,9,15,0),rgba(6,9,15,.95));}
 .pund-meta{font-family:var(--mono);font-size:9px;color:var(--dim);margin-top:3px;}
 .pund-why{font-family:var(--mono);font-size:9px;color:#7a96ae;margin-top:4px;padding-top:4px;border-top:1px solid rgba(255,255,255,.04);}
 
@@ -607,11 +609,11 @@ h3 .caps-hi, strong .caps-hi{ color:inherit; }
   <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-bottom:6px;align-items:start;">
     <div class="card">
       <div class="ch"><span>🎙️</span><span class="ct">Pundit Calls · A</span><span class="bdg bc" id="ck-bpund">--</span></div>
-      <div class="cb" id="ck-pund" style="display:grid;grid-template-columns:1fr 1fr;gap:0;"></div>
+      <div class="cb pundit-grid" id="ck-pund"></div>
     </div>
     <div class="card">
       <div class="ch"><span>🎙️</span><span class="ct">Pundit Calls · B</span><span class="bdg bc" id="ck-pund2">--</span></div>
-      <div class="cb" id="ck-pund-b" style="display:grid;grid-template-columns:1fr 1fr;gap:0;"></div>
+      <div class="cb pundit-grid" id="ck-pund-b"></div>
     </div>
   </div>
 
@@ -2660,12 +2662,12 @@ setInterval(()=>{
 }, 15000);
 
 // ── API wrapper — all calls go through APIQueue ──
-async function api(system, user, useSearch=true, maxTokens=null, model=null, timeoutMs=null){
-  return APIQueue.enqueue(`api:${system.slice(0,30)}`, () => _apiDirect(system, user, useSearch, maxTokens, model), {timeoutMs: timeoutMs||60000});
+async function api(system, user, useSearch=true, maxTokens=null, model=null, timeoutMs=null, temperature=null){
+  return APIQueue.enqueue(`api:${system.slice(0,30)}`, () => _apiDirect(system, user, useSearch, maxTokens, model, temperature), {timeoutMs: timeoutMs||60000});
 }
 
 // ── Internal direct API call (bypasses queue — use only via api()) ──
-async function _apiDirect(system, user, useSearch=true, maxTokens=null, model=null){
+async function _apiDirect(system, user, useSearch=true, maxTokens=null, model=null, temperature=null){
   if(!getKey()){ showKeyModal(); throw new Error('No API key'); }
   async function doCall(withSearch){
     const body={
@@ -2673,7 +2675,7 @@ async function _apiDirect(system, user, useSearch=true, maxTokens=null, model=nu
       contents:[{role:'user',parts:[{text:user}]}],
       generationConfig:{
         maxOutputTokens: maxTokens || getTokenBudget(user),
-        temperature:     getTemperature(withSearch),
+        temperature:     temperature !== null ? temperature : getTemperature(withSearch),
       },
       ...(withSearch?{tools:[{googleSearch:{}}]}:{})
     };
@@ -5187,10 +5189,10 @@ async function runTeachingTip(){
   const excl=bk.topics.length?`EXCLUDED: ${bk.topics.slice(-10).join('; ')}`:'';
   try{
     const r=await api(
-      'MSK radiology educator. One teaching pearl ONLY from 2022-2026 literature. NEVER cite papers before 2022. If unsure of year, write 2024.',
+      'MSK radiology educator. One teaching pearl ONLY from 2020-2026 literature. NEVER cite papers before 2020. If unsure of year, write 2024.',
       `${TODAY}. ${excl}
 
-One teaching pearl from a paper published 2022-2026 in one of these journals:
+One teaching pearl from a paper published 2020-2026 in one of these journals:
 Seminars in Musculoskeletal Radiology, Seminars in CT and MRI, MRI Clinics of North America, Radiologic Clinics of North America, Radiographics (RSNA), American Journal of Sports Medicine (AJSM), Orthopaedic Journal of Sports Medicine, Aspetar Sports Medicine Journal, Radiology (RSNA)
 
 Format:
@@ -5230,8 +5232,39 @@ async function runClinical(forceFresh=false){
   const dEl=document.getElementById('ddb-st');if(dEl)dEl.textContent=`Zero-Repeat v2 · ${n}T · ${bk.arbs.length}A · ${bk.meas.length}M · ${bsMode?'🎯 Blind Spot ACTIVE':'Building bank ('+n+'/15)'}`;
   document.getElementById('out-clin').innerHTML=sk();
   try{
-    const r=await api('You are an expert MSK radiologist training a colleague to develop expert-level pattern recognition. Every pearl must build the perceptual and cognitive skills of an expert reader. RULES: (1) Cite only 2022-2026 papers. If none: "Source: [Journal], 2024 (recent literature)". (2) Approved journals: Seminars in Musculoskeletal Radiology, Seminars in CT and MRI, MRI Clinics of North America, Radiologic Clinics of North America, Radiographics (RSNA), American Journal of Sports Medicine, Orthopaedic Journal of Sports Medicine, Aspetar, Radiology (RSNA). (3) STRICT zero-repeat — never reuse any topic, arbitrator, or threshold from the exclusion list. (4) Thresholds must be specific and numeric. (5) NO sequences, NO modalities, NO views — findings and anatomy only.',
-      `${TODAY}.\nEXCLUDED:\n${excl||'(First session.)'}\n${bsInstr}\n\n3 fresh clinical pearls. DIFFERENT body regions. NO sequences, NO modalities, NO views — anatomy and findings only.\n\nFormat exactly like this:\n\n**PEARL [N]: [FINDING NAME IN CAPS]**\nConcept: [What this finding IS — one sentence that anchors the pattern in anatomy and pathophysiology, no imaging terms]\nArbitrator: [A memorable NAMED decision criterion, e.g. "The Retrocalcaneal Pressure Arbitrator" — the single thing that forces a call]\nThreshold: [One precise numeric cutoff with units and direction of abnormality]\nTeaching: [The clinical significance — what this finding means and what changes in management. Pure clinical teaching only.]\nTrap: [The single cognitive error that causes experts to miss this — one sentence, perceptual or cognitive, not a protocol issue]\nViewbox Tip: [The gestalt — what your eye locks onto before you measure. Pure perceptual pattern. No imaging terms.]\nSource: [Journal], [Author] et al., [Year 2022-2026]`,true, 3500, GEMINI_MODEL_PRO);
+    const bkInject = [
+      bk.topics.length ? 'Topics used: '+bk.topics.join('; ') : null,
+      bk.arbs.length ? 'Arbitrators used: '+bk.arbs.join('; ') : null,
+      bk.meas.length ? 'Thresholds used: '+bk.meas.join('; ') : null
+    ].filter(Boolean).join(' | ') || '(First session — no exclusions yet)';
+    const clinSysPrompt = `You are an internationally recognized musculoskeletal radiologist training fellowship-trained MSK radiologists at a top-tier tertiary referral center. Your task is to generate ONLY high-yield, subspecialty-level pattern-recognition pearls that materially improve diagnostic accuracy, postoperative assessment, prognostic stratification, biomechanical understanding, or clinically/surgically relevant interpretation. The audience already knows standard fellowship-level teaching. Every pearl must contain: a nontrivial imaging/anatomic discriminator, a clinically or surgically relevant implication, concise mechanistic or biomechanical relevance, recent literature grounding, and expert-level pattern recognition. The educational target is: "What important expert-level insight does this imaging finding provide that may otherwise be underrecognized?"
+
+LITERATURE: Strongly prefer 2020-2026. Seminal pre-2020 literature may be used sparingly when the concept remains foundational and newer literature primarily refines rather than replaces it. Never fabricate literature conclusions or thresholds. Approved journals: Radiographics, Radiology, AJR, Skeletal Radiology, Seminars in Musculoskeletal Radiology, Seminars in CT and MRI, MRI Clinics of North America, Radiologic Clinics of North America, AJSM, OJSM, Arthroscopy, Knee Surgery Sports Traumatology Arthroscopy, Journal of Shoulder and Elbow Surgery, HSS Journal, Aspetar, CORR, European Journal of Radiology, Journal of Bone and Joint Surgery, Clinical Imaging, Radsource. Citation: Journal + year only. No author names, page numbers, DOI, or URLs. If uncertain: "Source: [Journal], 2024 (recent literature)".
+
+DOMAIN: 85-90% sports/instability/postoperative/biomechanics. 10-15% orthopedic oncology (only when substantially altering staging, biopsy planning, recurrence, or limb-salvage). Oncology maximum: 1 per 6-10 sports pearls.
+
+SPORTS PRIORITY: occult instability, failed stabilization, repair-failure biomarkers, postoperative biomechanics, capsulolabral mechanics, meniscal root biomechanics, PLC instability, syndesmotic instability, graft-tunnel mismatch, cartilage-restoration candidacy, revision imaging, rotational malalignment, subtle maltracking, dynamic instability correlates, arthroscopic-radiologic discordance, morphology predicting failed repair, return-to-play findings, hidden osseous instability markers, subtle secondary stabilizer failure.
+
+QUALITY RULES: (1) ZERO-REPEAT: never reuse topics, thresholds, arbitrators, or concepts from the exclusion list. (2) NO FALSE PRECISION: never invent exact percentages, millimeter cutoffs, angular thresholds, or predictive values when literature lacks consensus — write "no universally accepted threshold" or "emerging literature" instead. (3) SELF-FILTER: would a fellowship-trained MSK radiologist find this obvious? If yes, reject and regenerate. (4) ANTI-BOARD-REVIEW: reject classic measurements, memorized ratios, introductory biomechanics, basic tendon grading, standard ligament descriptions. (5) NO MODALITIES/SEQUENCES/VIEWS: findings and anatomy only. (6) EXPERT CONFERENCE TEST: each pearl must be worthy of senior attending case conference, multidisciplinary sports conference, or tertiary referral consultation — not board review or residency lecture. (7) INFORMATION DENSITY: every sentence must contain a discriminator, biomechanics, clinical relevance, or expert nuance — no filler. (8) MANAGEMENT CONSEQUENCE: each pearl must state what clinical or surgical decision it influences. (9) RADIOLOGIST SCOPE: do not prescribe surgical technique, recommend implants, or overstate imaging certainty.
+
+EXCLUSION BANK: The following topics/arbitrators/thresholds have already been used — do not repeat them: ${bkInject}
+
+SECONDARY SIGN DOMINANCE: favor compensatory remodeling, asymmetric wear, reactive osseous adaptation, secondary capsular distortion, directional edema, tethering morphology, altered force transmission, remote stabilizer injury, contact-pattern abnormalities over overt pathology.
+
+OUTPUT FORMAT — do not change section headings, the parser depends on this schema:
+
+**PEARL [N]: [CONCEPT NAME IN CAPS]**
+Concept: [Expert-level title capturing the core imaging insight]
+Arbitrator: [The key discriminator — morphologic feature, instability phenotype, operative correlation, or pattern-recognition sign that separates this from generic teaching]
+Threshold: [Validated cutoff when available; otherwise reproducible morphologic discriminator, instability phenotype, or "no universally accepted threshold"]
+Teaching: [2-4 sentences maximum. Dense expert-level teaching connecting imaging morphology to clinical, biomechanical, prognostic, or orthopedic relevance.]
+Trap: [Common interpretive error, false-negative mechanism, overcall risk, postoperative mimic, or board-review simplification to avoid]
+Viewbox Tip: [How to phrase or mentally package the finding in a report or conference discussion without overstepping the radiologist role]
+Source: [Journal, Year only]
+
+FINAL SELF-AUDIT: before output, reject any pearl that sounds like board prep, lacks novelty, lacks expert sophistication, uses vague language, could be answered by a general radiologist, or repeats known fellowship teaching.\`;
+    const r=await api(clinSysPrompt,
+      \`${TODAY}.\nEXCLUDED:\n${excl||'(First session.)'}\n${bsInstr}\n\n3 fresh clinical pearls. DIFFERENT body regions. NO sequences, NO modalities, NO views — anatomy and findings only.\n\nFormat exactly like this:\n\n**PEARL [N]: [FINDING NAME IN CAPS]**\nConcept: [What this finding IS — one sentence that anchors the pattern in anatomy and pathophysiology, no imaging terms]\nArbitrator: [A memorable NAMED decision criterion, e.g. "The Retrocalcaneal Pressure Arbitrator" — the single thing that forces a call]\nThreshold: [One precise numeric cutoff with units and direction of abnormality]\nTeaching: [The clinical significance — what this finding means and what changes in management. Pure clinical teaching only.]\nTrap: [The single cognitive error that causes experts to miss this — one sentence, perceptual or cognitive, not a protocol issue]\nViewbox Tip: [The gestalt — what your eye locks onto before you measure. Pure perceptual pattern. No imaging terms.]\nSource: [Journal], [Year 2020-2026]`,true, 3500, GEMINI_MODEL_PRO, 90000, 0.2);
     render(r,'out-clin');
     setDailyCache('clinical_pearl', r);
     const clinEl=document.getElementById('out-clin');
@@ -5250,7 +5283,7 @@ async function runClinical(forceFresh=false){
     }
     const newT=(r.match(/\*\*PEARL \d+:\s*([^*\n]+)\*\*/g)||[]).map(m=>m.replace(/\*\*PEARL \d+:\s*/,'').replace(/\*\*/g,'').trim());
     const newA=(r.match(/Arbitrator:\s*([^\n]+)/g)||[]).map(m=>m.replace('Arbitrator:','').trim());
-    const newM=(r.match(/Measurement:\s*([^\n]+)/g)||[]).map(m=>m.replace('Measurement:','').trim());
+    const newM=(r.match(/(?:Measurement|Threshold):\s*([^\n]+)/g)||[]).map(m=>m.replace(/(?:Measurement|Threshold):/,'').trim());
     const up={topics:[...new Set([...bk.topics,...newT])],arbs:[...new Set([...bk.arbs,...newA])],meas:[...new Set([...bk.meas,...newM])]};
     setBank(up);updateDedupUI();
     const dedupBadge=document.createElement('div');dedupBadge.className='ddb';dedupBadge.textContent=`✓ Logged: ${newT.length}T · ${newA.length}A · ${newM.length}M · Bank: ${up.topics.length}T/${up.arbs.length}A/${up.meas.length}M`;
@@ -5262,13 +5295,13 @@ async function runClinical(forceFresh=false){
       const p2=r.match(/\*\*PEARL 2[^*]*\*\*([\s\S]*?)(?=\*\*PEARL\s+3|\*\*SOURCE\b|$)/i);
       const fmtP=(hdr,body)=>{
         const b=body.replace(/\*\*(.+?)\*\*/g,'<b style="color:var(--br)">$1</b>')
-          .replace(/Source:/g,'<span class="pearl-lbl src">Source</span>')
           .replace(/Arbitrator:/g,'<br><span class="pearl-lbl arb">Arbitrator</span>')
           .replace(/Threshold:/g,'<br><span class="pearl-lbl meas">Threshold</span>')
           .replace(/Teaching:/g,'<br><span class="pearl-lbl txt">Teaching</span>')
           .replace(/Trap:/g,'<br><span class="pearl-lbl arb" style="color:var(--red)">Trap</span>')
           .replace(/Viewbox Tip:/g,'<br><span class="pearl-lbl src" style="color:var(--ac)">Viewbox Tip</span>')
           .replace(/Concept:/g,'<span class="pearl-lbl txt">Concept</span>')
+          .replace(/Source:/g,'<span class="pearl-lbl src">Source</span>')
           .replace(/\n/g,'<br>').trim();
         return `<div class="pearl-card" style="margin-bottom:8px;"><div class="pearl-hdr">${hdr.replace(/\*+/g,'').trim()}</div><div class="pearl-body">${b}</div></div>`;
       };
