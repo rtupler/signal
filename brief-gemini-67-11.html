@@ -200,7 +200,7 @@ select.inp{cursor:pointer;}
 
 /* ── PUNDIT CARDS ── */
 .pundit-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:6px;align-items:start;}
-.pund-card{background:rgba(255,255,255,.015);border:1px solid var(--brd);border-radius:5px;padding:7px 8px;margin-bottom:0;border-left:2px solid var(--ac);min-height:0;}
+.pund-card{background:rgba(255,255,255,.015);border:1px solid var(--brd);border-radius:5px;padding:7px 8px;margin-bottom:0;border-left:2px solid var(--ac);min-height:0;align-self:start;}
 .pund-card:last-child{margin-bottom:0;}
 .pund-name{font-family:var(--mono);font-size:8.5px;letter-spacing:.3px;color:var(--br);font-weight:700;margin-bottom:2px;}
 .pund-firm{font-family:var(--mono);font-size:7.5px;opacity:.72;color:var(--dim);margin-bottom:5px;}
@@ -5238,7 +5238,7 @@ async function runClinical(forceFresh=false){
       bk.meas.length ? 'Thresholds used: '+bk.meas.join('; ') : null
     ].filter(Boolean).join(' | ') || '(First session)';
     const r=await api(
-      'You are an expert MSK radiologist at a top-tier sports imaging center training fellowship-trained colleagues. Generate only subspecialty-level pearls. Audience knows standard fellowship teaching. 85-90% sports/instability/postoperative, 10-15% oncology. RULES: (1) 2020-2026 literature preferred; seminal pre-2020 allowed. (2) Approved journals: Radiographics, Radiology, AJR, Skeletal Radiology, Seminars MSK Radiology, MRI Clinics NA, AJSM, OJSM, Arthroscopy, HSS Journal, Aspetar, CORR, EJR, Radsource. (3) Citation: journal + year only, no authors. (4) NO sequences/modalities/views. (5) NO false precision — write "no universally accepted threshold" if uncertain. (6) ANTI-BOARD-REVIEW firewall — reject anything a resident would know. (7) SELF-FILTER — would a fellowship-trained MSK radiologist find this obvious? If yes, reject. (8) EXCLUSION BANK — never repeat: '+bkInject,
+      'You are an internationally recognized musculoskeletal radiologist training fellowship-trained MSK radiologists at a top-tier tertiary referral center. Generate ONLY high-yield, subspecialty-level pattern-recognition pearls. The audience already knows standard fellowship-level teaching. DOMAIN: 85-90% sports/instability/postoperative/biomechanics, 10-15% orthopedic oncology (only when substantially altering staging, biopsy, recurrence, or limb-salvage; max 1 per 6-10 sports pearls). SPORTS PRIORITY: occult instability, failed stabilization, repair-failure biomarkers, postoperative biomechanics, capsulolabral mechanics, meniscal root biomechanics, PLC/syndesmotic instability, graft-tunnel mismatch, revision imaging, rotational malalignment, arthroscopic-radiologic discordance. LITERATURE: strongly prefer 2020-2026; seminal pre-2020 allowed when foundational. Approved journals: Radiographics, Radiology, AJR, Skeletal Radiology, Seminars MSK Radiology, MRI Clinics NA, AJSM, OJSM, Arthroscopy, Knee Surgery Sports Traumatology Arthroscopy, Journal Shoulder Elbow Surgery, HSS Journal, Aspetar, CORR, European Journal of Radiology, Journal Bone Joint Surgery, Clinical Imaging, Radsource. Citation: journal + year only, no authors, no DOI. If uncertain: Source: [Journal], 2024 (recent literature). QUALITY RULES: (1) ZERO-REPEAT: never reuse topics/thresholds/arbitrators from exclusion list. (2) NO FALSE PRECISION: write \"no universally accepted threshold\" when literature lacks consensus — never invent cutoffs. (3) SELF-FILTER: would a fellowship-trained MSK radiologist find this obvious? If yes, reject. (4) ANTI-BOARD-REVIEW: reject classic measurements, memorized ratios, introductory biomechanics, basic tendon grading, standard ligament descriptions, routine degenerative findings. (5) NO MODALITIES/SEQUENCES/VIEWS. (6) EXPERT CONFERENCE TEST: worthy of senior attending case conference — not board review. (7) INFORMATION DENSITY: every sentence must contain discriminator, biomechanics, clinical relevance, or expert nuance — no filler. (8) MANAGEMENT CONSEQUENCE: each pearl must state what clinical or surgical decision it influences. (9) RADIOLOGIST SCOPE: do not prescribe surgical technique or overstate imaging certainty. (10) SECONDARY SIGN DOMINANCE: favor compensatory remodeling, asymmetric wear, reactive osseous adaptation, secondary capsular distortion, directional edema, tethering morphology over overt pathology. (11) EVIDENTIARY HUMILITY: distinguish validated findings from emerging concepts. EXCLUSION BANK — never repeat: '+bkInject,
       `${TODAY}.\nEXCLUDED:\n${excl||'(First session.)'}\n${bsInstr}\n\n3 fresh clinical pearls. DIFFERENT body regions. NO sequences, NO modalities, NO views.\n\nFormat exactly:\n\n**PEARL [N]: [FINDING NAME IN CAPS]**\nConcept: [One sentence — anatomy and pathophysiology, no imaging terms]\nArbitrator: [Named decision criterion]\nThreshold: [Specific numeric cutoff or "no universally accepted threshold"]\nTeaching: [2-4 sentences — clinical significance and management impact]\nTrap: [Single cognitive error experts make]\nViewbox Tip: [Perceptual pattern — what eye locks onto]\nSource: [Journal, Year 2020-2026]`,
       true, 3500, GEMINI_MODEL_PRO);
     setDailyCache('clinical_pearl', r);
@@ -7084,7 +7084,13 @@ function clearDalioHistory(){
 }
 
 // ════ KEY MODAL ════
-function showKeyModal(){document.getElementById('key-modal').classList.remove('hidden');}
+function showKeyModal(){
+  document.getElementById('key-modal').classList.remove('hidden');
+  const ki=document.getElementById('key-input');
+  const fi=document.getElementById('fred-input');
+  if(ki && getKey()) ki.value=getKey();
+  if(fi && getFredKey()) fi.value=getFredKey();
+}
 function hideKeyModal(){document.getElementById('key-modal').classList.add('hidden');}
 async function submitKey(){
   const k=document.getElementById('key-input').value.trim();
