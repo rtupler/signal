@@ -414,6 +414,7 @@ h3 .caps-hi, strong .caps-hi{ color:inherit; }
   <button class="tab" data-tab="btc-log">📋 LOG BANK</button>
   <span class="tab-sep"></span>
   <button class="tab" data-tab="forecasts">📈 FORECASTS</button>
+  <button class="tab" data-tab="arb-cases">🎯 ARB CASES</button>
   <button class="tab" data-tab="audit">🌙 AUDIT</button>
 </nav>
 
@@ -1829,6 +1830,41 @@ h3 .caps-hi, strong .caps-hi{ color:inherit; }
     </div>
   </div>
 
+</div>
+
+<!-- ═══ ARBITRATOR CASES ═══ -->
+<div class="panel" id="panel-arb-cases">
+  <div class="card" style="margin-bottom:8px;border-color:rgba(255,215,0,.15);">
+    <div class="ch" style="background:linear-gradient(90deg,var(--s2),rgba(255,215,0,.04));border-bottom-color:rgba(255,215,0,.15);">
+      <span>🎯</span><span class="ct" style="color:var(--gold);">Arbitrator Cases · Expert Pattern Recognition</span>
+      <span class="bdg bgold" id="arb-bank-count">--</span>
+      <button class="ref btn-flush" onclick="renderArbBank()" style="margin-left:auto;">↺</button>
+    </div>
+    <div class="cb">
+      <div style="font-family:var(--mono);font-size:9px;color:var(--dim);margin-bottom:10px;">
+        Select an arbitrator from your exclusion bank to generate an expert-level viewbox scenario. No patient history. No invented measurements. Pure pattern recognition.
+      </div>
+      <div id="arb-bank-grid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:6px;margin-bottom:12px;"></div>
+    </div>
+  </div>
+
+  <!-- Case output -->
+  <div class="card" id="arb-case-card" style="display:none;border-color:rgba(255,215,0,.2);">
+    <div class="ch" style="background:linear-gradient(90deg,var(--s2),rgba(255,215,0,.06));border-bottom-color:rgba(255,215,0,.2);">
+      <span>📋</span><span class="ct" style="color:var(--gold);" id="arb-case-title">Case</span>
+      <span class="bdg bgold" id="arb-case-badge">GENERATING</span>
+    </div>
+    <div class="cb out" id="arb-case-out"></div>
+    <div class="cb" style="border-top:1px solid var(--brd);padding:8px 10px;">
+      <div style="font-family:var(--mono);font-size:8.5px;color:var(--dim);margin-bottom:6px;">How did this case feel?</div>
+      <div style="display:flex;gap:8px;">
+        <button class="btn" onclick="rateArbCase('easy')" style="font-size:10px;padding:4px 10px;background:rgba(0,229,255,.08);">✓ Too Easy</button>
+        <button class="btn" onclick="rateArbCase('right')" style="font-size:10px;padding:4px 10px;background:rgba(0,255,136,.08);">★ Right Level</button>
+        <button class="btn" onclick="rateArbCase('hard')" style="font-size:10px;padding:4px 10px;background:rgba(255,215,0,.08);">⚡ Too Hard</button>
+      </div>
+      <div id="arb-rate-out" style="font-family:var(--mono);font-size:8.5px;color:var(--ac3);margin-top:6px;display:none;"></div>
+    </div>
+  </div>
 </div>
 
 <!-- ═══ AUDIT ═══ -->
@@ -5138,6 +5174,117 @@ async function runOverlap(){
 
 
 
+// ════ ARBITRATOR CASES ════
+let _currentArbArbitrator = null;
+let _currentArbConcept = null;
+
+function renderArbBank(){
+  const bk = getBank();
+  const grid = document.getElementById('arb-bank-grid');
+  const countEl = document.getElementById('arb-bank-count');
+  if(!grid) return;
+
+  // Load difficulty ratings
+  const ratings = JSON.parse(localStorage.getItem('rt_arb_ratings_v1')||'{}');
+
+  if(!bk.arbs || bk.arbs.length === 0){
+    grid.innerHTML = `<div style="font-family:var(--mono);font-size:10px;color:var(--dim);padding:10px;">
+      No arbitrators in bank yet. Generate clinical pearls first — arbitrators are saved automatically.
+    </div>`;
+    if(countEl) countEl.textContent = '0 ARBITRATORS';
+    return;
+  }
+
+  if(countEl) countEl.textContent = bk.arbs.length + ' ARBITRATORS';
+
+  // Match arbitrators with their concepts where possible
+  const topics = bk.topics || [];
+  grid.innerHTML = bk.arbs.map((arb, i) => {
+    const concept = topics[i] || '';
+    const rating = ratings[arb];
+    const ratingBadge = rating === 'easy' ? '<span style="color:var(--ac);font-size:7.5px;"> · TOO EASY</span>'
+                      : rating === 'right' ? '<span style="color:var(--ac3);font-size:7.5px;"> · ★ RIGHT LEVEL</span>'
+                      : rating === 'hard' ? '<span style="color:var(--gold);font-size:7.5px;"> · ⚡ TOO HARD</span>'
+                      : '';
+    return `<div style="background:var(--s2);border:1px solid var(--brd);border-left:2px solid var(--gold);border-radius:5px;padding:8px 10px;cursor:pointer;"
+      onclick="runArbCase('${arb.replace(/'/g,"\\'")}','${concept.replace(/'/g,"\\'")}')">
+      <div style="font-family:var(--mono);font-size:8px;color:var(--gold);font-weight:700;margin-bottom:3px;">ARBITRATOR${ratingBadge}</div>
+      <div style="font-size:11px;color:var(--tx);line-height:1.4;margin-bottom:4px;">${arb}</div>
+      ${concept ? `<div style="font-family:var(--mono);font-size:7.5px;color:var(--dim);">${concept.slice(0,60)}${concept.length>60?'...':''}</div>` : ''}
+      <div style="margin-top:6px;font-family:var(--mono);font-size:7.5px;color:var(--ac);opacity:.7;">▶ Run Case</div>
+    </div>`;
+  }).join('');
+}
+
+async function runArbCase(arbitrator, concept){
+  _currentArbArbitrator = arbitrator;
+  _currentArbConcept = concept;
+
+  const card = document.getElementById('arb-case-card');
+  const out = document.getElementById('arb-case-out');
+  const title = document.getElementById('arb-case-title');
+  const badge = document.getElementById('arb-case-badge');
+  const rateOut = document.getElementById('arb-rate-out');
+
+  if(!card || !out) return;
+  card.style.display = '';
+  if(title) title.textContent = arbitrator.slice(0,50) + (arbitrator.length>50?'...':'');
+  if(badge) badge.textContent = 'GENERATING';
+  if(rateOut) rateOut.style.display = 'none';
+  out.innerHTML = '<div class="sk-wrap"><div class="sk"></div><div class="sk w7"></div><div class="sk w5"></div></div>';
+  card.scrollIntoView({behavior:'smooth', block:'start'});
+
+  // Build grounded prompt — inject the stored arbitrator and concept
+  const systemPrompt = 'You are an expert MSK radiologist running a pattern-recognition teaching session for fellowship-trained colleagues. '
+    + 'Generate a structured viewbox scenario based ONLY on the provided arbitrator and concept. '
+    + 'STRICT RULES: (1) NO patient history — no age, sex, sport, or mechanism. Viewbox framing only. '
+    + '(2) NO invented measurements — use directional language only (widened beyond threshold, displaced beyond normal range). '
+    + '(3) NO arthroscopic outcome — say arthroscopic correlation is warranted, never confirm arthroscopic findings. '
+    + '(4) NO citations — this is pattern recognition, not a literature review. '
+    + '(5) NO modalities, sequences, or views — findings and anatomy only. '
+    + '(6) STAY GROUNDED — every detail must follow directly from the provided arbitrator. Do not invent pathology not implied by it. '
+    + '(7) EXPERT LEVEL — the scenario should challenge a fellowship-trained radiologist, not a resident.';
+
+  const userPrompt = `Arbitrator: ${arbitrator}\n`
+    + (concept ? `Concept: ${concept}\n` : '')
+    + `\nGenerate a viewbox teaching scenario using EXACTLY this schema:\n\n`
+    + `SCENARIO\n[2-3 sentences. Set the viewbox scene — what structure, what clinical context (postoperative/acute/chronic), what the eye is drawn to. No patient demographics. No modality.]\n\n`
+    + `WHAT TO IDENTIFY\n[The specific imaging finding the arbitrator is designed to detect. One sentence. No measurements — directional language only.]\n\n`
+    + `ARBITRATOR APPLIED\n[State the arbitrator by name. Describe how it applies to this scenario. What does it tell you?]\n\n`
+    + `DECISION CONSEQUENCE\n[What clinical or surgical decision does this arbitrator change? One sentence. Stay in radiologist lane — influence, not prescribe.]\n\n`
+    + `TRAP\n[The single cognitive error that causes this finding to be missed. One sentence.]\n\n`
+    + `TEACHING POINT\n[The expert-level insight this scenario reinforces. One sentence of maximum information density.]`;
+
+  try {
+    const r = await api(systemPrompt, userPrompt, false, 1200, GEMINI_MODEL_PRO, 60000, 0.2);
+    if(badge) badge.textContent = 'COMPLETE';
+    render(r, 'arb-case-out');
+    // Style the section headers
+    out.innerHTML = out.innerHTML
+      .replace(/\bSCENARIO\b/g, '<span style="font-family:var(--mono);font-size:8px;color:var(--gold);font-weight:700;display:block;margin:10px 0 3px 0;">SCENARIO</span>')
+      .replace(/\bWHAT TO IDENTIFY\b/g, '<span style="font-family:var(--mono);font-size:8px;color:var(--ac);font-weight:700;display:block;margin:10px 0 3px 0;">WHAT TO IDENTIFY</span>')
+      .replace(/\bARBITRATOR APPLIED\b/g, '<span style="font-family:var(--mono);font-size:8px;color:var(--gold);font-weight:700;display:block;margin:10px 0 3px 0;">ARBITRATOR APPLIED</span>')
+      .replace(/\bDECISION CONSEQUENCE\b/g, '<span style="font-family:var(--mono);font-size:8px;color:var(--ac3);font-weight:700;display:block;margin:10px 0 3px 0;">DECISION CONSEQUENCE</span>')
+      .replace(/\bTRAP\b/g, '<span style="font-family:var(--mono);font-size:8px;color:var(--red);font-weight:700;display:block;margin:10px 0 3px 0;">TRAP</span>')
+      .replace(/\bTEACHING POINT\b/g, '<span style="font-family:var(--mono);font-size:8px;color:var(--ac3);font-weight:700;display:block;margin:10px 0 3px 0;">TEACHING POINT</span>');
+  } catch(e){
+    if(badge) badge.textContent = 'ERROR';
+    err('arb-case-out', e.message);
+  }
+}
+
+function rateArbCase(rating){
+  if(!_currentArbArbitrator) return;
+  const ratings = JSON.parse(localStorage.getItem('rt_arb_ratings_v1')||'{}');
+  ratings[_currentArbArbitrator] = rating;
+  localStorage.setItem('rt_arb_ratings_v1', JSON.stringify(ratings));
+  const rateOut = document.getElementById('arb-rate-out');
+  const msgs = {easy:'Noted — this arbitrator will be deprioritized.', right:'★ Saved — good calibration.', hard:'Saved — revisit this arbitrator again soon.'};
+  if(rateOut){ rateOut.textContent = msgs[rating]||'Saved.'; rateOut.style.display=''; }
+  // Re-render bank to show updated rating
+  renderArbBank();
+}
+
 async function runAudit(){
   ld('btn-audit',true);
   try{const r=await api('End-of-day audit. Bullets. Use emojis.',`${TODAY} evening. Context: Iran war ongoing, oil elevated ($98 WTI), tariffs in effect.\n\nSearch what happened today. 3 bullets each:\n🚨 **PRIORITY** — things requiring action\n📋 **FOLLOW-UP** — things to track\nℹ️ **FYI** — useful to know`);render(r,'out-audit');}catch(e){err('out-audit',e.message);}
@@ -5162,7 +5309,26 @@ function updateAlloc(){
 // ════ CLINICAL DEDUP ════
 const CK='cm_bank_v2';
 function getBank(){try{const r=store.get(CK);return r?JSON.parse(r):{topics:[],arbs:[],meas:[]};}catch{return{topics:[],arbs:[],meas:[]};}}
-function setBank(b){store.set(CK,JSON.stringify(b));}
+function setBank(b){
+  // Staleness culling — remove entries older than 30 days
+  const STALE_MS = 30 * 24 * 60 * 60 * 1000;
+  const cutoff = Date.now() - STALE_MS;
+  const TS_KEY = 'rt_clin_bank_ts_v1';
+  const banked = JSON.parse(localStorage.getItem(TS_KEY)||'{}');
+  const now = Date.now();
+  // Timestamp new entries
+  [...(b.topics||[]),...(b.arbs||[]),...(b.meas||[])].forEach(k=>{ if(!banked[k]) banked[k]=now; });
+  // Cull stale
+  Object.keys(banked).forEach(k=>{ if(banked[k]<cutoff) delete banked[k]; });
+  localStorage.setItem(TS_KEY, JSON.stringify(banked));
+  // Filter to active only
+  const active = new Set(Object.keys(banked));
+  b.topics=(b.topics||[]).filter(t=>active.has(t));
+  b.arbs=(b.arbs||[]).filter(a=>active.has(a));
+  b.meas=(b.meas||[]).filter(m=>active.has(m));
+  store.set(CK,JSON.stringify(b));
+  console.log(`[Bank] ${b.topics.length}T/${b.arbs.length}A/${b.meas.length}M active (30d window)`);
+}
 function updateDedupUI(){const b=getBank();const n=b.topics.length;const el=document.getElementById('ddb-st');if(el)el.textContent=`Zero-Repeat v2 · ${n}T · ${b.arbs.length}A · ${b.meas.length}M · ${n>=15?'🎯 Blind Spot mode ACTIVE':'📚 Building bank ('+n+'/15)'}`;}
 const BLIND_SPOTS=['subtle Lisfranc injury (fleck sign, C1-M2 diastasis ≥1mm)','occult scaphoid fracture (fat pad sign, MRI within 72h)','posterior shoulder dislocation (trough sign, lightbulb head)','perilunate dislocation variants','non-displaced femoral neck (Garden I)','SLAP Type II vs IV variants','post-op labral re-tear vs expected change','Segond fracture + ACL/PLC complex','early AVN pre-collapse (crescent sign)','Hill-Sachs engagement assessment','adrenal incidentaloma threshold (20 HU vs 10 HU washout)','Morel-Lavallée lesion'];
 
@@ -5238,7 +5404,7 @@ async function runClinical(forceFresh=false){
       bk.meas.length ? 'Thresholds used: '+bk.meas.join('; ') : null
     ].filter(Boolean).join(' | ') || '(First session)';
     const r=await api(
-      'You are an internationally recognized musculoskeletal radiologist training fellowship-trained MSK radiologists at a top-tier tertiary referral center. Generate ONLY high-yield, subspecialty-level pattern-recognition pearls. The audience already knows standard fellowship-level teaching. DOMAIN: 85-90% sports/instability/postoperative/biomechanics, 10-15% orthopedic oncology (only when substantially altering staging, biopsy, recurrence, or limb-salvage; max 1 per 6-10 sports pearls). SPORTS PRIORITY: occult instability, failed stabilization, repair-failure biomarkers, postoperative biomechanics, capsulolabral mechanics, meniscal root biomechanics, PLC/syndesmotic instability, graft-tunnel mismatch, revision imaging, rotational malalignment, arthroscopic-radiologic discordance. LITERATURE: strongly prefer 2020-2026; seminal pre-2020 allowed when foundational. Approved journals: Radiographics, Radiology, AJR, Skeletal Radiology, Seminars MSK Radiology, MRI Clinics NA, AJSM, OJSM, Arthroscopy, Knee Surgery Sports Traumatology Arthroscopy, Journal Shoulder Elbow Surgery, HSS Journal, Aspetar, CORR, European Journal of Radiology, Journal Bone Joint Surgery, Clinical Imaging, Radsource. Citation: journal + year only, no authors, no DOI. If uncertain: Source: [Journal], 2024 (recent literature). QUALITY RULES: (1) ZERO-REPEAT: never reuse topics/thresholds/arbitrators from exclusion list. (2) NO FALSE PRECISION: write \"no universally accepted threshold\" when literature lacks consensus — never invent cutoffs. (3) SELF-FILTER: would a fellowship-trained MSK radiologist find this obvious? If yes, reject. (4) ANTI-BOARD-REVIEW: reject classic measurements, memorized ratios, introductory biomechanics, basic tendon grading, standard ligament descriptions, routine degenerative findings. (5) NO MODALITIES/SEQUENCES/VIEWS. (6) EXPERT CONFERENCE TEST: worthy of senior attending case conference — not board review. (7) INFORMATION DENSITY: every sentence must contain discriminator, biomechanics, clinical relevance, or expert nuance — no filler. (8) MANAGEMENT CONSEQUENCE: each pearl must state what clinical or surgical decision it influences. (9) RADIOLOGIST SCOPE: do not prescribe surgical technique or overstate imaging certainty. (10) SECONDARY SIGN DOMINANCE: favor compensatory remodeling, asymmetric wear, reactive osseous adaptation, secondary capsular distortion, directional edema, tethering morphology over overt pathology. (11) EVIDENTIARY HUMILITY: distinguish validated findings from emerging concepts. EXCLUSION BANK — never repeat: '+bkInject,
+      'EXCLUSION BANK — MANDATORY: Before generating any pearl, read this list. Never reuse any topic, arbitrator, threshold, or concept from this list: ' + bkInject + '\n\nou are an internationally recognized musculoskeletal radiologist training fellowship-trained MSK radiologists at a top-tier tertiary referral center. Your task is to generate ONLY high-yield, subspecialty-level pattern-recognition pearls that materially improve diagnostic accuracy, postoperative assessment, prognostic stratification, biomechanical understanding, or clinically/surgically relevant interpretation. The audience already knows standard fellowship-level teaching. Every pearl must contain: a nontrivial imaging/anatomic discriminator, a clinically or surgically relevant implication, concise mechanistic or biomechanical relevance, recent literature grounding, and expert-level pattern recognition. The educational target is: What important expert-level insight does this imaging finding provide that may otherwise be underrecognized?\n\nLITERATURE: Strongly prefer 2020-2026. Seminal pre-2020 literature may be used sparingly when the concept remains foundational and newer literature primarily refines rather than replaces it. Never fabricate literature conclusions or thresholds. Approved journals: Radiographics, Radiology, AJR, Skeletal Radiology, Seminars in Musculoskeletal Radiology, Seminars in CT and MRI, MRI Clinics of North America, Radiologic Clinics of North America, AJSM, OJSM, Arthroscopy, Knee Surgery Sports Traumatology Arthroscopy, Journal of Shoulder and Elbow Surgery, HSS Journal, Aspetar, CORR, European Journal of Radiology, Journal of Bone and Joint Surgery, Clinical Imaging, Radsource. Citation: Journal + year only. No author names, page numbers, DOI, or URLs. If uncertain: Source: [Journal], 2024 (recent literature).\n\nDOMAIN: 85-90% sports/instability/postoperative/biomechanics. 10-15% orthopedic oncology only when substantially altering staging, biopsy planning, recurrence assessment, or limb-salvage. Oncology maximum: 1 per 6-10 sports pearls. Do not increase oncology frequency merely because oncology concepts sound more advanced.\n\nSPORTS PRIORITY: occult instability, failed stabilization, repair-failure biomarkers, postoperative biomechanics, capsulolabral mechanics, meniscal root biomechanics, PLC instability, syndesmotic instability, graft-tunnel mismatch, cartilage-restoration candidacy, revision imaging, rotational malalignment, subtle maltracking, dynamic instability correlates, arthroscopic-radiologic discordance, morphology predicting failed repair, return-to-play findings, hidden osseous instability markers, subtle secondary stabilizer failure. Favor pearls that explain: persistent pain despite otherwise routine imaging, failed surgery, recurrent instability, unexpected postoperative symptoms, recurrent graft failure, occult mechanical dysfunction.\n\nORTHOPEDIC ONCOLOGY RULES: Do NOT generate basic lesion differentials, generic aggressive-feature lists, textbook periosteal reaction descriptions, broad benign-versus-malignant summaries. Favor: management-relevant morphology, biopsy-planning implications, recurrence-risk patterns, imaging-pathology discordance, subtle indicators of biologic aggressiveness, marrow transition-zone behavior, compartmental spread mechanics.\n\nQUALITY RULES: (1) ZERO-REPEAT: never reuse topics, thresholds, arbitrators, or concepts from exclusion list. (2) NO FALSE PRECISION: never invent exact percentages, millimeter cutoffs, angular thresholds, or predictive values when literature lacks consensus — write no universally accepted threshold or emerging literature instead. (3) SELF-FILTER: would a fellowship-trained MSK radiologist find this obvious? If yes, reject and regenerate. (4) ANTI-BOARD-REVIEW: reject classic measurements, memorized instability ratios, introductory biomechanics, common impingement teaching, basic tendon grading, standard ligament injury descriptions, routine degenerative findings. (5) NO MODALITIES/SEQUENCES/VIEWS: findings and anatomy only. (6) EXPERT CONFERENCE TEST: worthy of senior attending case conference, multidisciplinary sports conference, or tertiary referral consultation — not board review or residency lecture. (7) INFORMATION DENSITY: every sentence must contain a discriminator, biomechanics, clinical relevance, prognostic relevance, operative correlation, or expert-level nuance. Avoid explanatory filler. (8) MANAGEMENT CONSEQUENCE: each pearl must state what surgical or clinical decision it influences. If it does not change management, discard. (9) RADIOLOGIST SCOPE: do not prescribe surgical technique, recommend implants, or overstate imaging certainty. (10) SECONDARY SIGN DOMINANCE: favor compensatory remodeling, asymmetric wear, reactive osseous adaptation, secondary capsular distortion, directional edema, tethering morphology, altered force transmission, remote stabilizer injury over overt pathology. (11) EVIDENTIARY HUMILITY: distinguish validated literature findings from emerging concepts — do not present evolving concepts as universal consensus. (12) CASE-CONFERENCE REALISM: favor pearls that plausibly arise during difficult tertiary referral cases, postoperative imaging review, failed treatment reassessment, or revision surgery workup. Avoid teaching points that feel artificially constructed. (13) DISCRIMINATOR PRIORITY: favor asymmetry, directional remodeling, spatial relationships, transition-zone behavior, mismatch patterns, secondary stabilizer changes, compensatory adaptation, morphology disproportionate to apparent injury. (14) FALSE-NEGATIVE AWARENESS: favor pearls explaining why clinically significant pathology may be underrecognized despite otherwise routine imaging. (15) TEMPORAL THINKING: favor findings indicating progression toward instability, impending repair failure, early graft attenuation, evolving stress response, biologic progression before overt structural failure. (16) NO HEROIC RARITY: a subtle commonly-encountered but underrecognized biomechanical finding is preferred over an exotic diagnosis with limited practical relevance. (17) ARTHROSCOPIC CORRELATION: favor findings with strong arthroscopic or operative correlation — imaging-pathology discordance, occult instability identified arthroscopically, underestimated chondral injury, subtle secondary stabilizer injury. (18) FORBIDDEN PHRASES: never use look for, consider, can suggest, may correlate, might indicate. Use confident evidence-calibrated expert language. (19) DECISION-GRADE EVIDENCE: each pearl must include at least one of: validated numeric threshold, binary operative discriminator, reproducible morphologic pattern, instability phenotype, repair-failure biomarker, prognostic imaging feature, biomechanical relationship, arthroscopic correlation, or clinically relevant pattern-recognition sign. (20) POSTOPERATIVE BALANCE: distinguish adaptive postoperative change from early failure biomarkers and clinically meaningful recurrent pathology.\n\nFINAL SELF-AUDIT: before output, reject any pearl that: sounds like board prep, lacks novelty, lacks expert-level sophistication, lacks literature grounding, relies on generic measurements, uses vague language, could be answered by a general radiologist, repeats known fellowship teaching, prioritizes rarity over practical value, overstates orthopedic certainty, or drifts outside the radiologist role. Generate only pearls worthy of discussion among senior MSK attendings.',
       `${TODAY}.\nEXCLUDED:\n${excl||'(First session.)'}\n${bsInstr}\n\n3 fresh clinical pearls. DIFFERENT body regions. NO sequences, NO modalities, NO views.\n\nFormat exactly:\n\n**PEARL [N]: [FINDING NAME IN CAPS]**\nConcept: [One sentence — anatomy and pathophysiology, no imaging terms]\nArbitrator: [Named decision criterion]\nThreshold: [Specific numeric cutoff or "no universally accepted threshold"]\nTeaching: [2-4 sentences — clinical significance and management impact]\nTrap: [Single cognitive error experts make]\nViewbox Tip: [Perceptual pattern — what eye locks onto]\nSource: [Journal, Year 2020-2026]`,
       true, 3500, GEMINI_MODEL_PRO);
     setDailyCache('clinical_pearl', r);
@@ -7262,6 +7428,7 @@ function lazyLoad(t){
   }
   if(t==='clinical'){ setTimeout(()=>runClinical(), 400); }
   if(t==='fred' && Object.keys(FRED_DATA).length===0){ loadFredData(); }
+  if(t==='arb-cases'){ renderArbBank(); }
 }
 
 
