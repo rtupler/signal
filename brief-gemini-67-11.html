@@ -603,10 +603,16 @@ h3 .caps-hi, strong .caps-hi{ color:inherit; }
     </div>
   </div>
 
-  <!-- ── ROW 5: Top Pundit Calls — full width auto-fill ── -->
-  <div class="card" style="margin-bottom:6px;">
-    <div class="ch"><span>🎙️</span><span class="ct">Top Pundit Calls</span><span class="bdg bc" id="ck-bpund">--</span></div>
-    <div class="cb out" id="ck-pund" style="display:grid;grid-template-columns:repeat(3,1fr);gap:0;width:100%;"><div class="sk-wrap"><div class="sk"></div><div class="sk w7"></div></div></div>
+  <!-- ── ROW 5: Top Pundit Calls — two cards, each 2-column ── -->
+  <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-bottom:6px;align-items:start;">
+    <div class="card">
+      <div class="ch"><span>🎙️</span><span class="ct">Pundit Calls · A</span><span class="bdg bc" id="ck-bpund">--</span></div>
+      <div class="cb" id="ck-pund" style="display:grid;grid-template-columns:1fr 1fr;gap:0;"></div>
+    </div>
+    <div class="card">
+      <div class="ch"><span>🎙️</span><span class="ct">Pundit Calls · B</span><span class="bdg bc" id="ck-pund2">--</span></div>
+      <div class="cb" id="ck-pund-b" style="display:grid;grid-template-columns:1fr 1fr;gap:0;"></div>
+    </div>
   </div>
 
 </div>
@@ -4356,7 +4362,7 @@ function buildCkPundEntry(p, d){
   const noCall=!d.call||d.call.toLowerCase().includes('no published')||d.call.toLowerCase().includes('no call found')||d.call.trim().length<5;
   const borderCol=noCall?'rgba(255,255,255,.06)':d.signal==='BULLISH'?'rgba(124,252,0,.3)':d.signal==='BEARISH'?'rgba(255,77,77,.3)':'rgba(255,215,0,.2)';
   const opacity=noCall?'opacity:0.45;':'';
-  return `<div style="padding:6px 10px;border-bottom:1px solid var(--brd);border-left:2px solid ${borderCol};padding-left:9px;${opacity}">
+  return `<div style="padding:6px 10px;border-bottom:1px solid var(--brd);border-left:2px solid ${borderCol};padding-left:9px;${opacity}min-width:0;overflow:hidden;">
     <div style="display:flex;align-items:center;gap:5px;margin-bottom:2px;">
       <span style="font-family:var(--mono);font-size:8.5px;color:var(--br);font-weight:700;">${p.n}</span>
       <span style="font-family:var(--mono);font-size:7.5px;color:var(--dim);">· ${p.f}</span>
@@ -4386,6 +4392,21 @@ function buildPunditSummary(results){
 
 // ── Render ONE SCREEN + PUNDITS tab from cache immediately ──
 // Called from loadAll Lane 1 — all helper functions are defined by this point
+
+function renderPunditTwoCards(sorted){
+  const mid = Math.ceil(sorted.length/2);
+  const a = sorted.slice(0,mid);
+  const b = sorted.slice(mid);
+  const ckA = document.getElementById('ck-pund');
+  const ckB = document.getElementById('ck-pund-b');
+  const hasCall = ({d})=>d&&d.call&&d.call.trim().length>10;
+  if(ckA){ ckA.innerHTML = a.map(({p,d})=>buildCkPundEntry(p,d)).join(''); }
+  if(ckB){ ckB.innerHTML = b.map(({p,d})=>buildCkPundEntry(p,d)).join(''); }
+  const callCount = sorted.filter(hasCall).length;
+  badge('ck-bpund', callCount+' CALLS · '+sorted.length+' LIVE','bdg bc');
+  badge('ck-pund2', Math.ceil(sorted.length/2)+' VOICES','bdg bc');
+}
+
 function renderPunditsFromCache(){
   if(Object.keys(PCACHE).length === 0) return;
   try{
@@ -4401,7 +4422,7 @@ function renderPunditsFromCache(){
     // ONE SCREEN ck-pund
     const ckBox = document.getElementById('ck-pund');
     if(ckBox){
-      ckBox.innerHTML=`<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:0;width:100%;">${sorted.map(({p,d})=>buildCkPundEntry(p,d)).join('')}</div>`;
+      renderPunditTwoCards(sorted);
       badge('ck-bpund', sorted.filter(hasCall).length+' CALLS · '+sorted.length+' LIVE', 'bdg bc');
     }
 
@@ -4482,10 +4503,10 @@ async function runPunditsAM(){
   // Sort: pundits with real calls first, then "no call" ones
   const hasCall=({d})=>d&&d.call&&!d.call.toLowerCase().includes('no published')&&!d.call.toLowerCase().includes('no call found')&&d.call.trim().length>10;
   const filledSorted=[...filled.filter(hasCall), ...filled.filter(x=>!hasCall(x))];
-  if(ckBox) ckBox.innerHTML = `<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:0;width:100%;">${filledSorted.map(({p,d})=>buildCkPundEntry(p,d)).join('')}</div>`;
+  renderPunditTwoCards(filledSorted);
   // Mirror to morning tab
   const amBox = document.getElementById('am-pund');
-  if(amBox) amBox.innerHTML = `<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:0;width:100%;">${filledSorted.map(({p,d})=>buildCkPundEntry(p,d)).join('')}</div>`;
+
   const callCount = filledSorted.filter(hasCall).length;
   badge('ck-bpund', callCount+' CALLS · '+filledSorted.length+' LIVE', 'bdg bc');
   badge('am-bpund', callCount+' CALLS · '+filledSorted.length+' LIVE', 'bdg bc');
@@ -7219,7 +7240,7 @@ function lazyLoad(t){
         const results = today.map(p=>({p, d: PCACHE[p.n] ? parseOnePundit(PCACHE[p.n]) : {call:'',date:'--',signal:'NEUTRAL',ticker:'--',why:''}}));
         const hasCall=({d})=>d&&d.call&&d.call.trim().length>10;
         const sorted=[...results.filter(hasCall),...results.filter(x=>!hasCall(x))];
-        ckBox.innerHTML=`<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:0;width:100%;">${sorted.map(({p,d})=>buildCkPundEntry(p,d)).join('')}</div>`;
+        renderPunditTwoCards(sorted);
         badge('ck-bpund',sorted.filter(hasCall).length+' CALLS · '+sorted.length+' LIVE','bdg bc');
       }
     }
