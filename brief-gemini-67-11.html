@@ -7161,6 +7161,19 @@ async function _loadWeatherImpl(){
 
 // CNBC Opinion removed — unreliable web access
 
+// ── Lazy load deferred tabs on first open ──
+function lazyLoad(t){
+  if(t==='shows' && !APP_STATE.showsLoaded){
+    APP_STATE.showsLoaded = true;
+    const st = document.getElementById('shows-st');
+    const dayName = new Date().toLocaleDateString('en-US',{weekday:'long'});
+    if(st) st.textContent = `📡 Loading CNBC shows from ${dayName}...`;
+    reloadShows();
+  }
+  if(t==='clinical'){ setTimeout(()=>runClinical(), 400); }
+  if(t==='fred' && Object.keys(FRED_DATA).length===0){ loadFredData(); }
+}
+
 
 // ════ CACHE-FIRST RENDER ════
 // Paints the ONE SCREEN dashboard instantly from localStorage before any API calls fire.
