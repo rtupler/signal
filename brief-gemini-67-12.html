@@ -587,7 +587,7 @@ h3 .caps-hi, strong .caps-hi{ color:inherit; }
       <div class="ch" style="background:linear-gradient(90deg,var(--s2),rgba(255,215,0,.04));border-bottom-color:rgba(255,215,0,.15);">
         <span>🩻</span><span class="ct" style="color:var(--gold);">Clinical Pearl</span>
         <span class="bdg bgold" id="ck-bclin">--</span>
-        <button class="ref btn-flush" onclick="runClinical(true)" style="margin-left:6px;">↺</button>
+        <button class="ref btn-flush" id="btn-clin-ck" onclick="runClinical(true)" style="margin-left:6px;">↺</button>
       </div>
       <div class="cb out" id="ck-clin">
         <div style="font-family:var(--mono);font-size:8px;color:var(--dim);">Auto-generates on load.</div>
@@ -2332,7 +2332,7 @@ function getTodaysPundits(){
 // ── Model tiers ──
 // GEMINI_MODEL_PRO  : used for Strategist, Clinical Pearl — quality matters
 // GEMINI_MODEL_FAST : used for Morning Brief, Pundits, CNBC, AI Pearls — speed/cost matters
-const GEMINI_MODEL_PRO  = 'gemini-2.5-flash';       // best quality, used sparingly
+const GEMINI_MODEL_PRO  = 'gemini-3.5-flash';       // best quality, used sparingly
 const GEMINI_MODEL_FAST = 'gemini-2.5-flash-lite';  // fast + cheap, high-volume calls
 const GEMINI_MODEL      = GEMINI_MODEL_FAST;         // default fallback
 
@@ -5431,19 +5431,21 @@ function renderClinToCockpit(r){
 }
 
 async function runClinical(forceFresh=false){
-  ld('btn-clin',true);updateDedupUI();
+  ld('btn-clin',true);ld('btn-clin-ck',true);updateDedupUI();
   // Check daily cache first (skip if force refresh)
   const clinCached = forceFresh ? null : getDailyCache('clinical_pearl');
   if(clinCached){
     render(clinCached,'out-clin');
     renderClinToCockpit(clinCached);
     badge('ck-bclin','CACHED','bdg bgold');
-    ld('btn-clin',false);
+    ld('btn-clin',false);ld('btn-clin-ck',false);
     return;
   }
-  // Immediate skeleton so user sees activity
+  // Immediate skeleton on both tab and cockpit card
   const clinOut = document.getElementById('out-clin');
   if(clinOut) clinOut.innerHTML = sk()+sk()+sk();
+  const ckClinEl = document.getElementById('ck-clin');
+  if(ckClinEl) ckClinEl.innerHTML = sk()+sk()+sk();
   const bk=getBank(),n=bk.topics.length;
   const excl=[n?`EXCLUDED TOPICS: ${bk.topics.join('; ')}`:null,bk.arbs.length?`EXCLUDED ARBITRATORS: ${bk.arbs.join('; ')}`:null,bk.meas.length?`EXCLUDED MEASUREMENTS: ${bk.meas.join('; ')}`:null].filter(Boolean).join('\n');
   const bsMode=n>=15;
@@ -5477,7 +5479,7 @@ async function runClinical(forceFresh=false){
       } else {
         err('out-clin','Pearl generation failed — Gemini returned search output. Try again in 30s.');
       }
-      ld('btn-clin',false);
+      ld('btn-clin',false);ld('btn-clin-ck',false);
       return;
     }
     render(r,'out-clin');
@@ -5508,7 +5510,7 @@ async function runClinical(forceFresh=false){
     // BTC Log — append pearls to persistent clinical log
     logClinEntry('pearls', r);
   }catch(e){err('out-clin',e.message);}
-  ld('btn-clin',false);
+  ld('btn-clin',false);ld('btn-clin-ck',false);
 }
 function viewBank(){const b=getBank();alert(`EXCLUSION BANK v2\n\nTOPICS:\n${b.topics.join('\n')}\n\nARBITRATORS:\n${b.arbs.join('\n')}\n\nMEASUREMENTS:\n${b.meas.join('\n')}`);}
 function clearBank(){if(confirm('Reset exclusion bank?')){store.remove(CK);updateDedupUI();}}
