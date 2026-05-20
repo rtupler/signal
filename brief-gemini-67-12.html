@@ -587,7 +587,7 @@ h3 .caps-hi, strong .caps-hi{ color:inherit; }
       <div class="ch" style="background:linear-gradient(90deg,var(--s2),rgba(255,215,0,.04));border-bottom-color:rgba(255,215,0,.15);">
         <span>🩻</span><span class="ct" style="color:var(--gold);">Clinical Pearl</span>
         <span class="bdg bgold" id="ck-bclin">--</span>
-        <button class="ref btn-flush" id="btn-clin-ck" onclick="runClinical(true)" style="margin-left:6px;">↺</button>
+        <button class="ref btn-flush" onclick="runClinical(true)" style="margin-left:6px;">↺</button>
       </div>
       <div class="cb out" id="ck-clin">
         <div style="font-family:var(--mono);font-size:8px;color:var(--dim);">Auto-generates on load.</div>
@@ -703,7 +703,7 @@ h3 .caps-hi, strong .caps-hi{ color:inherit; }
       <div class="ch" style="background:linear-gradient(90deg,var(--s2),rgba(255,215,0,.04));border-bottom-color:rgba(255,215,0,.15);">
         <span>🩻</span><span class="ct" style="color:var(--gold);">Clinical Pearls</span>
         <span class="bdg bgold" id="am-clin-badge">--</span>
-        <button class="ref" onclick="runClinical(true)" style="margin-left:6px;">↺</button>
+        <button class="ref" onclick="runClinical()" style="margin-left:6px;">↺</button>
       </div>
       <div class="cb out" id="out-clin-am">
         <div style="font-family:var(--mono);font-size:8px;color:var(--dim);">Auto-generates on load.</div>
@@ -2332,7 +2332,7 @@ function getTodaysPundits(){
 // ── Model tiers ──
 // GEMINI_MODEL_PRO  : used for Strategist, Clinical Pearl — quality matters
 // GEMINI_MODEL_FAST : used for Morning Brief, Pundits, CNBC, AI Pearls — speed/cost matters
-const GEMINI_MODEL_PRO  = 'gemini-3.5-flash';       // best quality, used sparingly
+const GEMINI_MODEL_PRO  = 'gemini-2.5-flash';       // best quality, used sparingly
 const GEMINI_MODEL_FAST = 'gemini-2.5-flash-lite';  // fast + cheap, high-volume calls
 const GEMINI_MODEL      = GEMINI_MODEL_FAST;         // default fallback
 
@@ -5431,28 +5431,26 @@ function renderClinToCockpit(r){
 }
 
 async function runClinical(forceFresh=false){
-  ld('btn-clin',true);ld('btn-clin-ck',true);updateDedupUI();
+  ld('btn-clin',true);updateDedupUI();
   // Check daily cache first (skip if force refresh)
   const clinCached = forceFresh ? null : getDailyCache('clinical_pearl');
   if(clinCached){
     render(clinCached,'out-clin');
     renderClinToCockpit(clinCached);
     badge('ck-bclin','CACHED','bdg bgold');
-    ld('btn-clin',false);ld('btn-clin-ck',false);
+    ld('btn-clin',false);
     return;
   }
-  // Immediate skeleton on both tab and cockpit card
+  // Immediate skeleton so user sees activity
   const clinOut = document.getElementById('out-clin');
   if(clinOut) clinOut.innerHTML = sk()+sk()+sk();
-  const ckClinEl = document.getElementById('ck-clin');
-  if(ckClinEl) ckClinEl.innerHTML = sk()+sk()+sk();
   const bk=getBank(),n=bk.topics.length;
   const excl=[n?`EXCLUDED TOPICS: ${bk.topics.join('; ')}`:null,bk.arbs.length?`EXCLUDED ARBITRATORS: ${bk.arbs.join('; ')}`:null,bk.meas.length?`EXCLUDED MEASUREMENTS: ${bk.meas.join('; ')}`:null].filter(Boolean).join('\n');
   const bsMode=n>=15;
   const bsList=BLIND_SPOTS.filter(d=>!bk.topics.some(t=>d.toLowerCase().includes(t.toLowerCase().slice(0,10)))).slice(0,5).map(d=>`• ${d}`).join('\n');
   const bsInstr=bsMode?`\n🎯 BLIND SPOT MODE (${n} in bank): ≥1 pearl MUST come from this high-miss list:\n${bsList}\nFor blind spot pearl: state WHY commonly missed and what the correct threshold is.`:'\n(Building bank — broad subspecialty coverage.)';
   const dEl=document.getElementById('ddb-st');if(dEl)dEl.textContent=`Zero-Repeat v2 · ${n}T · ${bk.arbs.length}A · ${bk.meas.length}M · ${bsMode?'🎯 Blind Spot ACTIVE':'Building bank ('+n+'/15)'}`;
-  const _oc=document.getElementById('out-clin');if(_oc)_oc.innerHTML=sk();
+  document.getElementById('out-clin').innerHTML=sk();
   try{
     const bkInject = [
       bk.topics.length ? 'Topics used: '+bk.topics.join('; ') : null,
@@ -5462,7 +5460,7 @@ async function runClinical(forceFresh=false){
     const r=await api(
       'EXCLUSION BANK — MANDATORY: Before generating any pearl, read this list. Never reuse any topic, arbitrator, threshold, or concept from this list: ' + bkInject + '\n\nYou are an internationally recognized musculoskeletal radiologist training fellowship-trained MSK radiologists at a top-tier tertiary referral center. Your task is to generate ONLY high-yield, subspecialty-level pattern-recognition pearls that materially improve diagnostic accuracy, postoperative assessment, prognostic stratification, biomechanical understanding, or clinically/surgically relevant interpretation. The audience already knows standard fellowship-level teaching. Every pearl must contain: a nontrivial imaging/anatomic discriminator, a clinically or surgically relevant implication, concise mechanistic or biomechanical relevance, recent literature grounding, and expert-level pattern recognition. The educational target is: What important expert-level insight does this imaging finding provide that may otherwise be underrecognized?\n\nLITERATURE: Strongly prefer 2020-2026. Seminal pre-2020 literature may be used sparingly when the concept remains foundational and newer literature primarily refines rather than replaces it. Never fabricate literature conclusions or thresholds. Approved journals: Radiographics, Radiology, AJR, Skeletal Radiology, Seminars in Musculoskeletal Radiology, Seminars in CT and MRI, MRI Clinics of North America, Radiologic Clinics of North America, AJSM, OJSM, Arthroscopy, Knee Surgery Sports Traumatology Arthroscopy, Journal of Shoulder and Elbow Surgery, HSS Journal, Aspetar, CORR, European Journal of Radiology, Journal of Bone and Joint Surgery, Clinical Imaging, Radsource. Citation: Journal + year only. No author names, page numbers, DOI, or URLs. If uncertain: Source: [Journal], 2024 (recent literature).\n\nDOMAIN: 85-90% sports/instability/postoperative/biomechanics. 10-15% orthopedic oncology only when substantially altering staging, biopsy planning, recurrence assessment, or limb-salvage. Oncology maximum: 1 per 6-10 sports pearls. Do not increase oncology frequency merely because oncology concepts sound more advanced.\n\nSPORTS PRIORITY: occult instability, failed stabilization, repair-failure biomarkers, postoperative biomechanics, capsulolabral mechanics, meniscal root biomechanics, PLC instability, syndesmotic instability, graft-tunnel mismatch, cartilage-restoration candidacy, revision imaging, rotational malalignment, subtle maltracking, dynamic instability correlates, arthroscopic-radiologic discordance, morphology predicting failed repair, return-to-play findings, hidden osseous instability markers, subtle secondary stabilizer failure. Favor pearls that explain: persistent pain despite otherwise routine imaging, failed surgery, recurrent instability, unexpected postoperative symptoms, recurrent graft failure, occult mechanical dysfunction.\n\nORTHOPEDIC ONCOLOGY RULES: Do NOT generate basic lesion differentials, generic aggressive-feature lists, textbook periosteal reaction descriptions, broad benign-versus-malignant summaries. Favor: management-relevant morphology, biopsy-planning implications, recurrence-risk patterns, imaging-pathology discordance, subtle indicators of biologic aggressiveness, marrow transition-zone behavior, compartmental spread mechanics.\n\nQUALITY RULES: (1) ZERO-REPEAT: never reuse topics, thresholds, arbitrators, or concepts from exclusion list. (2) NO FALSE PRECISION: never invent exact percentages, millimeter cutoffs, angular thresholds, or predictive values when literature lacks consensus — write no universally accepted threshold or emerging literature instead. (3) SELF-FILTER: would a fellowship-trained MSK radiologist find this obvious? If yes, reject and regenerate. (4) ANTI-BOARD-REVIEW: reject classic measurements, memorized instability ratios, introductory biomechanics, common impingement teaching, basic tendon grading, standard ligament injury descriptions, routine degenerative findings. (5) NO MODALITIES/SEQUENCES/VIEWS: findings and anatomy only. (6) EXPERT CONFERENCE TEST: worthy of senior attending case conference, multidisciplinary sports conference, or tertiary referral consultation — not board review or residency lecture. (7) INFORMATION DENSITY: every sentence must contain a discriminator, biomechanics, clinical relevance, prognostic relevance, operative correlation, or expert-level nuance. Avoid explanatory filler. (8) MANAGEMENT CONSEQUENCE: each pearl must state what surgical or clinical decision it influences. If it does not change management, discard. (9) RADIOLOGIST SCOPE: do not prescribe surgical technique, recommend implants, or overstate imaging certainty. (10) SECONDARY SIGN DOMINANCE: favor compensatory remodeling, asymmetric wear, reactive osseous adaptation, secondary capsular distortion, directional edema, tethering morphology, altered force transmission, remote stabilizer injury over overt pathology. (11) EVIDENTIARY HUMILITY: distinguish validated literature findings from emerging concepts — do not present evolving concepts as universal consensus. (12) CASE-CONFERENCE REALISM: favor pearls that plausibly arise during difficult tertiary referral cases, postoperative imaging review, failed treatment reassessment, or revision surgery workup. Avoid teaching points that feel artificially constructed. (13) DISCRIMINATOR PRIORITY: favor asymmetry, directional remodeling, spatial relationships, transition-zone behavior, mismatch patterns, secondary stabilizer changes, compensatory adaptation, morphology disproportionate to apparent injury. (14) FALSE-NEGATIVE AWARENESS: favor pearls explaining why clinically significant pathology may be underrecognized despite otherwise routine imaging. (15) TEMPORAL THINKING: favor findings indicating progression toward instability, impending repair failure, early graft attenuation, evolving stress response, biologic progression before overt structural failure. (16) NO HEROIC RARITY: a subtle commonly-encountered but underrecognized biomechanical finding is preferred over an exotic diagnosis with limited practical relevance. (17) ARTHROSCOPIC CORRELATION: favor findings with strong arthroscopic or operative correlation — imaging-pathology discordance, occult instability identified arthroscopically, underestimated chondral injury, subtle secondary stabilizer injury. (18) FORBIDDEN PHRASES: never use look for, consider, can suggest, may correlate, might indicate. Use confident evidence-calibrated expert language. (19) DECISION-GRADE EVIDENCE: each pearl must include at least one of: validated numeric threshold, binary operative discriminator, reproducible morphologic pattern, instability phenotype, repair-failure biomarker, prognostic imaging feature, biomechanical relationship, arthroscopic correlation, or clinically relevant pattern-recognition sign. (20) POSTOPERATIVE BALANCE: distinguish adaptive postoperative change from early failure biomarkers and clinically meaningful recurrent pathology.\n\nFINAL SELF-AUDIT: before output, reject any pearl that: sounds like board prep, lacks novelty, lacks expert-level sophistication, lacks literature grounding, relies on generic measurements, uses vague language, could be answered by a general radiologist, repeats known fellowship teaching, prioritizes rarity over practical value, overstates orthopedic certainty, or drifts outside the radiologist role. Generate only pearls worthy of discussion among senior MSK attendings. OUTPUT DISCIPLINE: Do NOT output search queries, tool code, Python, retrieval planning, reasoning traces, Google search instructions, intermediate analysis, chain-of-thought, or workflow planning. Output ONLY finalized pearl content using the exact schema above.',
       `${TODAY}.\nEXCLUDED:\n${excl||'(First session.)'}\n${bsInstr}\n\n3 fresh clinical pearls. DIFFERENT body regions. NO sequences, NO modalities, NO views.\n\nFormat exactly:\n\n**PEARL [N]: [FINDING NAME IN CAPS]**\nConcept: [One sentence — anatomy and pathophysiology, no imaging terms]\nArbitrator: [Named decision criterion]\nThreshold: [Specific numeric cutoff or "no universally accepted threshold"]\nTeaching: [2-4 sentences — clinical significance and management impact]\nTrap: [Single cognitive error experts make]\nViewbox Tip: [Perceptual pattern — what eye locks onto]\nSource: [Journal, Year 2020-2026]`,
-      true, 3500, GEMINI_MODEL_PRO);
+      true, 3500, GEMINI_MODEL_FAST);
 
     // ── Schema gate: reject if pearl structure missing ──
     const hasSchema = r && r.includes('Concept:') && r.includes('Arbitrator:') && r.includes('Teaching:');
@@ -5471,7 +5469,7 @@ async function runClinical(forceFresh=false){
       const r2 = await api(
         'You are an expert MSK radiologist. Output ONLY clinical pearls using this exact schema. No search queries. No tool code. No Python. No planning.\n\nSchema:\n**PEARL [N]: [FINDING NAME IN CAPS]**\nConcept: [anatomy and pathophysiology]\nArbitrator: [named decision criterion]\nThreshold: [numeric cutoff or "no universally accepted threshold"]\nTeaching: [2-4 sentences]\nTrap: [single cognitive error]\nViewbox Tip: [perceptual pattern]\nSource: [Journal, Year]',
         `${TODAY}. Generate 3 expert MSK radiology pearls. Output ONLY the schema above.`,
-        false, 3500, GEMINI_MODEL_PRO
+        false, 3500, GEMINI_MODEL_FAST
       );
       if(r2 && r2.includes('Concept:')){
         render(r2,'out-clin');
@@ -5479,7 +5477,7 @@ async function runClinical(forceFresh=false){
       } else {
         err('out-clin','Pearl generation failed — Gemini returned search output. Try again in 30s.');
       }
-      ld('btn-clin',false);ld('btn-clin-ck',false);
+      ld('btn-clin',false);
       return;
     }
     render(r,'out-clin');
@@ -5510,7 +5508,7 @@ async function runClinical(forceFresh=false){
     // BTC Log — append pearls to persistent clinical log
     logClinEntry('pearls', r);
   }catch(e){err('out-clin',e.message);}
-  ld('btn-clin',false);ld('btn-clin-ck',false);
+  ld('btn-clin',false);
 }
 function viewBank(){const b=getBank();alert(`EXCLUSION BANK v2\n\nTOPICS:\n${b.topics.join('\n')}\n\nARBITRATORS:\n${b.arbs.join('\n')}\n\nMEASUREMENTS:\n${b.meas.join('\n')}`);}
 function clearBank(){if(confirm('Reset exclusion bank?')){store.remove(CK);updateDedupUI();}}
@@ -7666,12 +7664,6 @@ async function loadAll(){
     if(!queueIsBusy()) runAiPearls();
     else setTimeout(runAiPearls, 8000);
   }, 5000);
-
-  // Clinical Pearls — auto-generate on new day, serve cache same day
-  setTimeout(() => {
-    if(!queueIsBusy()) runClinical(false);
-    else setTimeout(() => runClinical(false), 8000);
-  }, 6500);
 }
 async function reloadAll(){
   if(APP_STATE._inflight['reloadAll']) return; // prevent parallel reload
